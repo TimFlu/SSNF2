@@ -153,8 +153,8 @@ def main():
     cluster = LocalCluster()
     client = Client(cluster)
 
-    data_file_pattern = "/work/gallim/devel/CQRRelatedStudies/NormalizingFlow/samples/data/DoubleEG/nominal/*.parquet"
-    mc_uncorr_file_pattern = "/work/gallim/devel/CQRRelatedStudies/NormalizingFlow/samples/mc_uncorr/DYJetsToLL_M-50_TuneCP5_13TeV-amcatnloFXFX-pythia8/nominal/*.parquet"
+    data_file_pattern = "/work/tfluehma/git/ShowerShapesNormalizingFlow/samples/data/DoubleEG/nominal/*.parquet"
+    mc_uncorr_file_pattern = "/work/tfluehma/git/ShowerShapesNormalizingFlow/samples/mc_uncorr/DYJetsToLL_M-50_TuneCP5_13TeV-amcatnloFXFX-pythia8/nominal/*.parquet"
 
     data_df = dd.read_parquet(data_file_pattern, columns=columns, engine="fastparquet")
     mc_uncorr_df = dd.read_parquet(

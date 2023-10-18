@@ -3,8 +3,8 @@ import xgboost
 
 
 phoid_files = {
-    "eb": "/work/gallim/devel/CQRRelatedStudies/SSNF2/preprocess/XGB_Model_Barrel_SA_phoID_UL2017_woCorr.json",
-    "ee": "/work/gallim/devel/CQRRelatedStudies/SSNF2/preprocess/XGB_Model_Endcap_SA_phoID_UL2017_woCorr.json",
+    "eb": "/work/tfluehma/git/SSNF2/preprocess/XGB_Model_Barrel_SA_phoID_UL2017_woCorr.json",
+    "ee": "/work/tfluehma/git/SSNF2/preprocess/XGB_Model_Endcap_SA_phoID_UL2017_woCorr.json",
 }
 
 
