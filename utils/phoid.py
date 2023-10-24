@@ -1,7 +1,8 @@
 import warnings
 import xgboost
+from pathlib import Path
 
-
+file_dir = Path(__file__).parent.absolute()
 phoid_files = {
     "eb": "/work/tfluehma/git/SSNF2/preprocess/XGB_Model_Barrel_SA_phoID_UL2017_woCorr.json",
     "ee": "/work/tfluehma/git/SSNF2/preprocess/XGB_Model_Endcap_SA_phoID_UL2017_woCorr.json",

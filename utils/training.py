@@ -1,6 +1,7 @@
 import numpy as np
 import pickle as pkl
 import time
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,15 +14,18 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 
+from lightning.pytorch.loggers import CometLogger
+
 from utils.datasets import ddp_setup, ParquetDataset, ParquetDatasetOne
 from utils.custom_models import (
     create_mixture_flow_model,
     save_model,
-    load_mixture_model,
+    load_model,
     load_fff_mixture_model,
 )
 from utils.models import get_conditional_base_flow, get_zuko_nsf
 from utils.plots import sample_and_plot_base, transform_and_plot_top, plot_one
+from utils.log import setup_comet_logger
 
 
 class EarlyStopping:
@@ -108,7 +112,7 @@ def train_base(device, cfg, world_size=None, device_ids=None):
 
     if cfg.checkpoint is not None:
         # assume that the checkpoint is path to a directory
-        model, _, _, start_epoch, th, _ = load_mixture_model(
+        model, _, _, start_epoch, th, _ = load_model(
             model, model_dir=cfg.checkpoint, filename="checkpoint-latest.pt"
         )
         model = model.to(device)
@@ -197,6 +201,8 @@ def train_base(device, cfg, world_size=None, device_ids=None):
 
     # train the model
     writer = SummaryWriter(log_dir="runs")
+    comet_name = os.getcwd().split("/")[-1]
+    comet_logger = setup_comet_logger(comet_name, cfg.model)
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=cfg.optimizer.learning_rate,
@@ -268,6 +274,9 @@ def train_base(device, cfg, world_size=None, device_ids=None):
             writer.add_scalars(
                 "Losses", {"train": epoch_train_loss, "val": epoch_test_loss}, epoch
             )
+            comet_logger.log_metrics(
+                {"train": epoch_train_loss, "val": epoch_test_loss}, step=epoch
+            )
 
         # sample and validation
         if epoch % cfg.sample_every == 0 or epoch == 1:
@@ -278,6 +287,7 @@ def train_base(device, cfg, world_size=None, device_ids=None):
                 model_name=cfg.model.name,
                 epoch=epoch,
                 writer=writer,
+                comet_logger=comet_logger,
                 context_variables=cfg.context_variables,
                 target_variables=cfg.target_variables,
                 device=device,
@@ -336,38 +346,54 @@ def train_top(device, cfg, world_size=None, device_ids=None):
     # models
     input_dim = len(cfg.target_variables)
     context_dim = len(cfg.context_variables)
-    flow_params_dct = {
-        "input_dim": input_dim,
-        "context_dim": context_dim,
-        "base_kwargs": {
-            "num_steps_maf": cfg.model.maf.num_steps,
-            "num_steps_arqs": cfg.model.arqs.num_steps,
-            "num_transform_blocks_maf": cfg.model.maf.num_transform_blocks,
-            "num_transform_blocks_arqs": cfg.model.arqs.num_transform_blocks,
-            "activation": cfg.model.activation,
-            "dropout_probability_maf": cfg.model.maf.dropout_probability,
-            "dropout_probability_arqs": cfg.model.arqs.dropout_probability,
-            "use_residual_blocks_maf": cfg.model.maf.use_residual_blocks,
-            "use_residual_blocks_arqs": cfg.model.arqs.use_residual_blocks,
-            "batch_norm_maf": cfg.model.maf.batch_norm,
-            "batch_norm_arqs": cfg.model.arqs.batch_norm,
-            "num_bins_arqs": cfg.model.arqs.num_bins,
-            "tail_bound_arqs": cfg.model.arqs.tail_bound,
-            "hidden_dim_maf": cfg.model.maf.hidden_dim,
-            "hidden_dim_arqs": cfg.model.arqs.hidden_dim,
-            "init_identity": cfg.model.init_identity,
-        },
-        "transform_type": cfg.model.transform_type,
-    }
+    if cfg.model.name == "mixture":
+        flow_params_dct = {
+            "input_dim": input_dim,
+            "context_dim": context_dim,
+            "base_kwargs": {
+                "num_steps_maf": cfg.model.maf.num_steps,
+                "num_steps_arqs": cfg.model.arqs.num_steps,
+                "num_transform_blocks_maf": cfg.model.maf.num_transform_blocks,
+                "num_transform_blocks_arqs": cfg.model.arqs.num_transform_blocks,
+                "activation": cfg.model.activation,
+                "dropout_probability_maf": cfg.model.maf.dropout_probability,
+                "dropout_probability_arqs": cfg.model.arqs.dropout_probability,
+                "use_residual_blocks_maf": cfg.model.maf.use_residual_blocks,
+                "use_residual_blocks_arqs": cfg.model.arqs.use_residual_blocks,
+                "batch_norm_maf": cfg.model.maf.batch_norm,
+                "batch_norm_arqs": cfg.model.arqs.batch_norm,
+                "num_bins_arqs": cfg.model.arqs.num_bins,
+                "tail_bound_arqs": cfg.model.arqs.tail_bound,
+                "hidden_dim_maf": cfg.model.maf.hidden_dim,
+                "hidden_dim_arqs": cfg.model.arqs.hidden_dim,
+                "init_identity": cfg.model.init_identity,
+            },
+            "transform_type": cfg.model.transform_type,
+        }
+        create_function = create_mixture_flow_model
+        which = "mixture"
+    elif cfg.model.name == "splines":
+        pass
+    elif cfg.model.name == "zuko_nsf":
+        flow_params_dct = {
+            "input_dim": input_dim,
+            "context_dim": context_dim,
+            "ntransforms": cfg.model.ntransforms,
+            "nbins": cfg.model.nbins,
+            "nnodes": cfg.model.nnodes,
+            "nlayers": cfg.model.nlayers,
+        }
+        create_function = get_zuko_nsf
+        which = "zuko_nsf"
 
-    model_data = create_mixture_flow_model(**flow_params_dct)
-    model_data, _, _, _, _, _ = load_mixture_model(
-        model_data, model_dir=cfg.data.checkpoint, filename="best_train_loss.pt"
+    model_data = create_function(**flow_params_dct)
+    model_data, _, _, _, _, _ = load_model(
+        model_data, model_dir=cfg.data.checkpoint, filename="best_train_loss.pt", which=which
     )
     model_data = model_data.to(device)
-    model_mc = create_mixture_flow_model(**flow_params_dct).to(device)
-    model_mc, _, _, _, _, _ = load_mixture_model(
-        model_mc, model_dir=cfg.mc.checkpoint, filename="best_train_loss.pt"
+    model_mc = create_function(**flow_params_dct).to(device)
+    model_mc, _, _, _, _, _ = load_model(
+        model_mc, model_dir=cfg.mc.checkpoint, filename="best_train_loss.pt", which=which
     )
     model_mc = model_mc.to(device)
 
@@ -379,19 +405,20 @@ def train_top(device, cfg, world_size=None, device_ids=None):
         "anneal": cfg.model.anneal,
     }
     flow_params_dct["penalty"] = penalty
-    model = create_mixture_flow_model(**flow_params_dct)
+    model = create_function(**flow_params_dct)
     start_epoch = 1
     best_train_loss = np.inf
     if cfg.checkpoint is not None:
-        model, _, _, start_epoch, th, _ = load_fff_mixture_model(
-            top_file=f"{cfg.checkpoint}/checkpoint-latest.pt",
-            mc_file=f"{cfg.mc.checkpoint}/best_train_loss.pt",
-            data_file=f"{cfg.data.checkpoint}/best_train_loss.pt",
-            top_penalty=penalty,
-        )
-        model_data = model.flow_data
-        model_mc = model.flow_mc
-        best_train_loss = np.min(th)
+        if cfg.model.name == "mixture":
+            model, _, _, start_epoch, th, _ = load_fff_mixture_model(
+                top_file=f"{cfg.checkpoint}/checkpoint-latest.pt",
+                mc_file=f"{cfg.mc.checkpoint}/best_train_loss.pt",
+                data_file=f"{cfg.data.checkpoint}/best_train_loss.pt",
+                top_penalty=penalty,
+            )
+            model_data = model.flow_data
+            model_mc = model.flow_mc
+            best_train_loss = np.min(th)
 
     model = model.to(device)
 
@@ -484,6 +511,38 @@ def train_top(device, cfg, world_size=None, device_ids=None):
         shuffle=False if world_size is not None else True,
         sampler=DistributedSampler(test_dataset_mc) if world_size is not None else None,
     )
+    test_dataset_mc_full = ParquetDataset(
+        test_file_mc,
+        cfg.context_variables,
+        cfg.target_variables,
+        device=device,
+        pipelines=pipelines_data,
+        rows=None,
+    )
+    test_loader_mc_full = DataLoader(
+        test_dataset_mc_full,
+        batch_size=cfg.test.batch_size,
+        shuffle=False if world_size is not None else True,
+        sampler=DistributedSampler(test_dataset_mc_full)
+        if world_size is not None
+        else None,
+    )
+    test_dataset_data_full = ParquetDataset(
+        test_file_data,
+        cfg.context_variables,
+        cfg.target_variables,
+        device=device,
+        pipelines=pipelines_data,
+        rows=None,
+    )
+    test_loader_data_full = DataLoader(
+        test_dataset_data_full,
+        batch_size=cfg.test.batch_size,
+        shuffle=False if world_size is not None else True,
+        sampler=DistributedSampler(test_dataset_data_full)
+        if world_size is not None
+        else None,
+    )
 
     # freeze base flows
     for param in model_data.parameters():
@@ -540,7 +599,10 @@ def train_top(device, cfg, world_size=None, device_ids=None):
 
             optimizer.zero_grad()
 
-            loss1, loss2, loss3 = ddp_model(target, context, inverse=inverse)
+            if "zuko" in cfg.model.name:
+                loss1, loss2, loss3 = ddp_model.log_prob(target, context, inverse=inverse)
+            else:
+                loss1, loss2, loss3 = ddp_model(target, context, inverse=inverse)
             loss1 = loss1 * weights
             loss2 = loss2 * weights
             loss3 = loss3 * weights
@@ -574,7 +636,10 @@ def train_top(device, cfg, world_size=None, device_ids=None):
                 context, target, weights, _ = data
                 inverse = True
             with torch.no_grad():
-                loss1, loss2, loss3 = ddp_model(target, context, inverse=inverse)
+                if "zuko" in cfg.model.name:
+                    loss1, loss2, loss3 = ddp_model.log_prob(target, context, inverse=inverse)
+                else:
+                    loss1, loss2, loss3 = ddp_model(target, context, inverse=inverse)
                 loss1 = loss1 * weights
                 loss2 = loss2 * weights
                 loss3 = loss3 * weights
@@ -620,8 +685,8 @@ def train_top(device, cfg, world_size=None, device_ids=None):
         if epoch % cfg.sample_every == 0 or epoch == 1:
             print("Sampling and plotting...")
             transform_and_plot_top(
-                mc_loader=test_loader_mc,
-                data_loader=test_loader_data,
+                mc_loader=test_loader_mc_full,
+                data_loader=test_loader_data_full,
                 model=model,
                 epoch=epoch,
                 writer=writer,
@@ -741,7 +806,7 @@ def train_one(device, cfg, world_size=None, device_ids=None):
     if cfg.checkpoint is not None:
         if cfg.model.name == "mixture":
             # assume that the checkpoint is path to a directory
-            model, _, _, start_epoch, th, _ = load_mixture_model(
+            model, _, _, start_epoch, th, _ = load_model(
                 model, model_dir=cfg.checkpoint, filename="checkpoint-latest.pt"
             )
             best_train_loss = np.min(th)
