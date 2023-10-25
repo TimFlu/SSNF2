@@ -14,8 +14,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 
-from lightning.pytorch.loggers import CometLogger
-
 from utils.datasets import ddp_setup, ParquetDataset, ParquetDatasetOne
 from utils.custom_models import (
     create_mixture_flow_model,
@@ -557,6 +555,8 @@ def train_top(device, cfg, world_size=None, device_ids=None):
 
     # train the model
     writer = SummaryWriter(log_dir="runs")
+    comet_name = os.getcwd().split("/")[-1]
+    comet_logger = setup_comet_logger(comet_name, cfg.model)
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=cfg.optimizer.learning_rate,
@@ -680,6 +680,19 @@ def train_top(device, cfg, world_size=None, device_ids=None):
                 {"train": epoch_train_loss_3, "val": epoch_test_loss_3},
                 epoch,
             )
+            comet_logger.log_metrics(
+                {
+                    "train_total": epoch_train_loss,
+                    "val_total": epoch_test_loss,
+                    "train_log_prob": epoch_train_loss_1,
+                    "val_log_prob": epoch_test_loss_1,
+                    "train_logabsdet": epoch_train_loss_2,
+                    "val_logabsdet": epoch_test_loss_2,
+                    "train_distance": epoch_train_loss_3,
+                    "val_distance": epoch_test_loss_3,
+                },
+                step=epoch,
+            )
 
         # sample and validation
         if epoch % cfg.sample_every == 0 or epoch == 1:
@@ -690,6 +703,7 @@ def train_top(device, cfg, world_size=None, device_ids=None):
                 model=model,
                 epoch=epoch,
                 writer=writer,
+                comet_logger=comet_logger,
                 context_variables=cfg.context_variables,
                 target_variables=cfg.target_variables,
                 device=device,
