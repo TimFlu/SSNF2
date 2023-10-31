@@ -61,8 +61,8 @@ def setup_logger(
 def setup_comet_logger(name, cfg_model):
     comet_logger = Experiment(
         api_key="DzzVXiirHMuZBc2iIketfZWbm",
-        workspace="maxgalli",
-        project_name="ssnf2",
+        workspace="timflu",
+        project_name="ssnf-byt",
         #experiment_name="",
         #save_dir="",
     )
