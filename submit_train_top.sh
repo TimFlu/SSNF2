@@ -2,7 +2,7 @@
 
 # Define the parameters
 params=(
-  "cfg0 eb"
+  "cfg_zuko0 eb"
 )
 
 # Loop over the parameters
