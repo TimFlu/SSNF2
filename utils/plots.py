@@ -47,7 +47,7 @@ transformed_ranges = {
         "probe_pfChargedIsoPFPV": [-2, 3.5],
         "probe_pfChargedIsoWorstVtx": [-5, 6],
         "probe_energyRaw": [0, 300],
-    }
+    },
 }
 
 
@@ -60,17 +60,25 @@ def divide_dist(distribution, bins):
     edges[-1] = sorted_dist[-1]
     return edges
 
+def interpolate_weighted_quantiles(values, weights, quantiles):
+    i = np.argsort(values)
+    c = np.cumsum(weights[i])
+    return values[i[np.searchsorted(c, np.array(quantiles) * c[-1])]]
+
 
 def dump_profile_plot(
-    ax, ss_name, cond_name, sample_name, ss_arr, cond_arr, color, cond_edges
+    ax, ss_name, cond_name, sample_name, ss_arr, cond_arr, color, cond_edges, weights
 ):
-    df = pd.DataFrame({ss_name: ss_arr, cond_name: cond_arr})
+    df = pd.DataFrame({ss_name: ss_arr, cond_name: cond_arr, "weights": weights})
     quantiles = [0.25, 0.5, 0.75]
     qlists = [[], [], []]
     centers = []
     for left_edge, right_edge in zip(cond_edges[:-1], cond_edges[1:]):
         dff = df[(df[cond_name] > left_edge) & (df[cond_name] < right_edge)]
-        qlist = np.quantile(dff[ss_name], quantiles)
+        # procedure for weighted quantiles
+        data = dff[ss_name].values
+        weights = dff["weights"].values
+        qlist = interpolate_weighted_quantiles(data, weights, quantiles)
         for i, q in enumerate(qlist):
             qlists[i].append(q)
         centers.append((left_edge + right_edge) / 2)
@@ -82,6 +90,112 @@ def dump_profile_plot(
     ax.plot(centers, qlists[mid_index], color=color, label=sample_name)
 
     return ax
+
+
+def dump_full_profile_plot(
+    nbins,
+    target_variable,
+    cond_variable,
+    data_df,
+    mc_uncorr_df,
+    mc_corr_df,
+    subdetector,
+    weights,
+    output_dir="",
+    extra_name="",
+    writer_epoch=None,
+    cometlogger_epoch=None,
+):
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    data_ss_arr = data_df[target_variable].values
+    data_cond_arr = data_df[cond_variable].values
+    mc_uncorr_ss_arr = mc_uncorr_df[target_variable].values
+    mc_uncorr_cond_arr = mc_uncorr_df[cond_variable].values
+    mc_corr_ss_arr = mc_corr_df[target_variable].values
+    mc_corr_cond_arr = mc_corr_df[cond_variable].values
+    cond_edges = divide_dist(data_cond_arr, nbins)
+
+    for name, ss_arr, cond_arr, color, w in [
+        ("data", data_ss_arr, data_cond_arr, "black", np.ones(len(data_ss_arr))),
+        ("mc", mc_uncorr_ss_arr, mc_uncorr_cond_arr, "red", weights),
+        ("mc corr", mc_corr_ss_arr, mc_corr_cond_arr, "blue", weights),
+    ]:
+        ax = dump_profile_plot(
+            ax=ax,
+            ss_name=target_variable,
+            cond_name=cond_variable,
+            sample_name=name,
+            ss_arr=ss_arr,
+            cond_arr=cond_arr,
+            color=color,
+            cond_edges=cond_edges,
+            weights=w,
+        )
+    ax.legend()
+    ax.set_xlabel(cond_variable)
+    ax.set_ylabel(target_variable)
+    # reduce dimension of labels and axes names
+    plt.rcParams["axes.labelsize"] = 12
+    plt.rcParams["xtick.labelsize"] = 12
+    plt.rcParams["ytick.labelsize"] = 12
+    plt.rcParams["legend.fontsize"] = 12
+    fig.tight_layout()
+    fig_name = f"profiles_{target_variable}_{cond_variable}_{subdetector}{extra_name}"
+
+    if writer_epoch is not None:
+        writer, epoch = writer_epoch
+        writer.add_figure(fig_name, fig, epoch)
+    if cometlogger_epoch is not None:
+        comet_logger, epoch = cometlogger_epoch
+        comet_logger.log_figure(fig_name, fig, step=epoch)
+    if writer_epoch is None and cometlogger_epoch is None:
+        if type(output_dir) == str:
+            output_dir = [output_dir]
+        for dr in output_dir:
+            for ext in ["pdf", "png"]:
+                fig.savefig(dr + "/" + fig_name + "." + ext, bbox_inches="tight")
+    plt.close(fig)
+
+
+def print_mc_hist(
+    up, down, bins, range, label, data_hist, data_hist_norm, data_centers, data_err, mc, color, weights
+):
+    if weights is None:
+        weights = np.ones(len(mc))
+
+    mc_hist, mc_bins = np.histogram(
+        mc, bins=bins, range=range, weights=weights
+    )
+    mc_hist_norm, _, _ = up.hist(
+        mc, bins=bins, range=range, weights=weights, density=True, label=label, color=color, histtype="step"
+    )
+    mc_err = np.sqrt(np.histogram(mc, bins=bins, range=range, weights=weights**2)[0])
+    mc_err_norm = mc_err / (np.diff(mc_bins) * np.sum(weights))
+    up.errorbar(
+        data_centers,
+        mc_hist_norm,
+        yerr=mc_err_norm,
+        color=color,
+        marker="",
+        linestyle="",
+        markersize=4,
+    )
+
+    rdatamc_hist = data_hist_norm / mc_hist_norm
+    rdatamc_err = (
+        np.sqrt((data_err / data_hist) ** 2 + (mc_err / mc_hist) ** 2)
+    ) * rdatamc_hist
+    down.errorbar(
+        data_centers,
+        rdatamc_hist,
+        yerr=rdatamc_err,
+        color=color,
+        marker="o",
+        linestyle="",
+        markersize=4,
+    )
+
+    return up, down
 
 
 def dump_main_plot(
@@ -125,56 +239,52 @@ def dump_main_plot(
         gridspec_kw={"height_ratios": (2, 1)},
         sharex=True,
     )
-    mc_hist, mc_bins, _ = up.hist(
-        mc_uncorr,
-        bins=bins,
-        range=range,
-        histtype="step",
-        label=labels[1],
-        density=True,
-        weights=weights,
-        linewidth=2,
-        color="r",
+    data_hist, data_bins = np.histogram(data, bins=bins, range=range)
+    data_hist_norm, _ = np.histogram(
+        data, bins=bins, range=range, density=True
     )
-    if mc_corr is not None:
-        mc_corr_hist, mc_corr_bins, _ = up.hist(
-            mc_corr,
-            bins=bins,
-            range=range,
-            histtype="step",
-            label=labels[2],
-            density=True,
-            weights=weights,
-            linewidth=2,
-            color="b",
-        )
-    data_hist, data_bins = np.histogram(data, bins=bins, range=range, density=True)
     data_centers = (data_bins[1:] + data_bins[:-1]) / 2
-    up.plot(
+    data_err = np.sqrt(data_hist)
+    data_err_norm = data_err / (np.diff(data_bins) * len(data))
+    up.errorbar(
         data_centers,
-        data_hist,
+        data_hist_norm,
+        yerr=data_err_norm,
         label=labels[0],
         color="k",
         marker="o",
         linestyle="",
-        markersize=3,
+        markersize=4,
     )
-    down.plot(
+    up, down = print_mc_hist(
+        up,
+        down,
+        bins,
+        range,
+        labels[1],
+        data_hist,
+        data_hist_norm,
         data_centers,
-        data_hist / mc_hist,
-        color="r",
-        marker="o",
-        linestyle="",
-        markersize=3,
+        data_err,
+        mc_uncorr,
+        "r",
+        weights,
     )
+
     if mc_corr is not None:
-        down.plot(
+        up, down = print_mc_hist(
+            up,
+            down,
+            bins,
+            range,
+            labels[2],
+            data_hist,
+            data_hist_norm,
             data_centers,
-            data_hist / mc_corr_hist,
-            color="b",
-            marker="o",
-            linestyle="",
-            markersize=3,
+            data_err,
+            mc_corr,
+            "b",
+            weights,
         )
 
     if name in ["probe_pfChargedIsoPFPV", "probe_pfPhoIso03"]:
@@ -184,7 +294,7 @@ def dump_main_plot(
         down.set_xticks(ticks)
         down.set_xticklabels(ticks)
     down.set_xlabel(x_label)
-    up.set_ylabel("Events / BinWidth")
+    up.set_ylabel("Normalized yield")
     down.set_ylabel("Ratio")
     down.set_xlim(range[0], range[1])
     down.set_ylim(0.8, 1.2)
@@ -268,8 +378,8 @@ def sample_and_plot_base(
                 output_dir="",
                 subdetector=calo,
                 extra_name=f"_reco_sampled_transformed",
-                writer_epoch=(writer, epoch),
-                cometlogger_epoch=(comet_logger, epoch),
+                writer_epoch=(writer, epoch) if writer is not None else None,
+                cometlogger_epoch=(comet_logger, epoch) if comet_logger is not None else None,
                 labels=["Original", "Sampled"],
             )
 
@@ -301,8 +411,8 @@ def sample_and_plot_base(
             output_dir="",
             subdetector=calo,
             extra_name=f"_reco_sampled",
-            writer_epoch=(writer, epoch),
-            cometlogger_epoch=(comet_logger, epoch),
+            writer_epoch=(writer, epoch) if writer is not None else None,
+            cometlogger_epoch=(comet_logger, epoch) if comet_logger is not None else None,
             labels=["Original", "Sampled"],
         )
 
@@ -312,14 +422,23 @@ def transform_and_plot_top(
     data_loader,
     model,
     epoch,
-    writer,
-    comet_logger,
     context_variables,
     target_variables,
     device,
     pipeline,
     calo,
+    writer=None,
+    comet_logger=None,
+    output_dir="",
 ):
+    fff = True
+    try:
+        model_mc, model_data = model
+        fff = False
+    except:
+        pass
+    logger.info("Plotting with fff: {}".format(fff))
+
     with torch.no_grad():
         data_lst, mc_lst, mc_corr_lst = [], [], []
         data_context_lst, mc_context_lst, mc_corr_context_lst = [], [], []
@@ -328,7 +447,14 @@ def transform_and_plot_top(
         for data, mc in zip(data_loader, mc_loader):
             context_data, target_data, weights_data, extra_data = data
             context_mc, target_mc, weights_mc, extra_mc = mc
-            target_mc_corr, _ = model.transform(target_mc, context_mc, inverse=False)
+            if fff:
+                target_mc_corr, _ = model.transform(
+                    target_mc, context_mc, inverse=False
+                )
+            else:  # two flows case
+                # zuko
+                latent_space_mc = model_mc(context_mc).transform(target_mc)
+                target_mc_corr = model_data(context_mc).transform.inv(latent_space_mc)
             target_data = target_data.detach().cpu().numpy()
             target_mc = target_mc.detach().cpu().numpy()
             target_mc_corr = target_mc_corr.detach().cpu().numpy()
@@ -376,14 +502,16 @@ def transform_and_plot_top(
                     "x_label": var,
                     "bins": 100,
                     "range": transformed_ranges[pipeline][var],
-                }, 
-                output_dir="",
+                },
+                output_dir=output_dir,
                 subdetector=calo,
                 mc_corr=mc_corr[var],
                 weights=weights_mc,
                 extra_name=f"_top_transformed",
-                writer_epoch=(writer, epoch),
-                cometlogger_epoch=(comet_logger, epoch),
+                writer_epoch=(writer, epoch) if writer is not None else None,
+                cometlogger_epoch=(comet_logger, epoch)
+                if comet_logger is not None
+                else None,
                 labels=None,
             )
 
@@ -412,21 +540,6 @@ def transform_and_plot_top(
             .inverse_transform(mc_corr[var].values.reshape(-1, 1))
             .reshape(-1)
         )
-        if device == 0 or type(device) != int:
-            dump_main_plot(
-                data[var],
-                mc[var],
-                variable_conf=vars_config[var],
-                output_dir="",
-                subdetector=calo,
-                mc_corr=mc_corr[var],
-                weights=weights_mc,
-                extra_name="_top",
-                writer_epoch=(writer, epoch),
-                cometlogger_epoch=(comet_logger, epoch),
-                labels=None,
-            )
-
     for var in context_variables:
         data_context[var] = (
             data_pipeline[var]
@@ -443,87 +556,64 @@ def transform_and_plot_top(
             .inverse_transform(mc_corr_context[var].values.reshape(-1, 1))
             .reshape(-1)
         )
-
     # photon ID
     # make dataframes by merging context, target and extra
     data_df = pd.concat([data, data_context, data_extra], axis=1)
     mc_df = pd.concat([mc, mc_context, mc_extra], axis=1)
     mc_corr_df = pd.concat([mc_corr, mc_corr_context, mc_extra], axis=1)
 
-    pho_id_data = calculate_photonid_mva(data_df, calo=calo)
-    pho_id_mc = calculate_photonid_mva(mc_df, calo=calo)
-    pho_id_mc_corr = calculate_photonid_mva(mc_corr_df, calo=calo)
-    
-    dump_main_plot(
-        pho_id_data,
-        pho_id_mc,
-        vars_config["probe_mvaID"],
-        output_dir="",
-        subdetector=calo,
-        mc_corr=pho_id_mc_corr,
-        weights=weights_mc,
-        extra_name="_top",
-        labels=None,
-        writer_epoch=(writer, epoch), 
-        cometlogger_epoch=(comet_logger, epoch),
-    )
+    data_df["probe_mvaID"] = calculate_photonid_mva(data_df, calo=calo)
+    mc_df["probe_mvaID"] = calculate_photonid_mva(mc_df, calo=calo)
+    mc_corr_df["probe_mvaID"] = calculate_photonid_mva(mc_corr_df, calo=calo)
+
+    for var in target_variables + ["probe_mvaID"]:
+        if device == 0 or type(device) != int:
+            dump_main_plot(
+                data_df[var],
+                mc_df[var],
+                variable_conf=vars_config[var],
+                output_dir=output_dir,
+                subdetector=calo,
+                mc_corr=mc_corr_df[var],
+                weights=weights_mc,
+                extra_name="_top",
+                writer_epoch=(writer, epoch) if writer is not None else None,
+                cometlogger_epoch=(comet_logger, epoch)
+                if comet_logger is not None
+                else None,
+                labels=None,
+            )
 
     # now plot profiles
-    nbins = 8
-    for column in target_variables:
-        for cond_column in context_variables:
-            fig, ax = plt.subplots(1, 1, figsize=(8, 6))
-            data_ss_arr = data[column].values
-            data_cond_arr = data_context[cond_column].values
-            mc_uncorr_ss_arr = mc[column].values
-            mc_uncorr_cond_arr = mc_context[cond_column].values
-            mc_corr_ss_arr = mc_corr[column].values
-            mc_corr_cond_arr = mc_corr_context[cond_column].values
-            cond_edges = divide_dist(data_cond_arr, nbins)
-
-            for name, ss_arr, cond_arr, color in [
-                ("data", data_ss_arr, data_cond_arr, "blue"),
-                ("mc", mc_uncorr_ss_arr, mc_uncorr_cond_arr, "red"),
-                ("mc corr", mc_corr_ss_arr, mc_corr_cond_arr, "green"),
-            ]:
-                ax = dump_profile_plot(
-                    ax=ax,
-                    ss_name=column,
-                    cond_name=cond_column,
-                    sample_name=name,
-                    ss_arr=ss_arr,
-                    cond_arr=cond_arr,
-                    color=color,
-                    cond_edges=cond_edges,
+    if device == 0 or type(device) != int:
+        nbins = 8
+        for column in target_variables + ["probe_mvaID"]:
+            for cond_column in context_variables:
+                logger.info(
+                    "Plotting profile for {} vs {}".format(column, cond_column)
                 )
-            ax.legend()
-            ax.set_xlabel(cond_column)
-            ax.set_ylabel(column)
-            # reduce dimension of labels and axes names
-            plt.rcParams["axes.labelsize"] = 12
-            plt.rcParams["xtick.labelsize"] = 12
-            plt.rcParams["ytick.labelsize"] = 12
-            plt.rcParams["legend.fontsize"] = 12
-            fig.tight_layout()
-            if writer is not None:
-                writer.add_figure(
-                    f"profiles_{column}_{cond_column}", fig, epoch
-                )
-                comet_logger.log_figure(
-                    f"profiles_{column}_{cond_column}", fig, step=epoch
+                dump_full_profile_plot(
+                    nbins,
+                    column,
+                    cond_column,
+                    data_df,
+                    mc_df,
+                    mc_corr_df,
+                    subdetector=calo,
+                    weights=weights_mc,
+                    output_dir=output_dir,
+                    extra_name="_top",
+                    writer_epoch=(writer, epoch) if writer is not None else None,
+                    cometlogger_epoch=(comet_logger, epoch) if comet_logger is not None else None,
                 )
 
-    # close figures
-    plt.close("all")
-
-    
 def plot_one(
     mc_test_loader,
     data_test_loader,
     model,
-    model_name,
     epoch,
     writer,
+    comet_logger,
     context_variables,
     target_variables,
     device,
@@ -535,23 +625,20 @@ def plot_one(
         data_context_lst, mc_context_lst, mc_corr_context_lst = [], [], []
         mc_weights_lst = []
         data_extra_lst, mc_extr_lst = [], []
-        for (data_context, data_target, data_weights, data_extra), (mc_context, mc_target, mc_weights, mc_extra) in zip(
-            data_test_loader, mc_test_loader
-        ):
+        for (data_context, data_target, data_weights, data_extra), (
+            mc_context,
+            mc_target,
+            mc_weights,
+            mc_extra,
+        ) in zip(data_test_loader, mc_test_loader):
             data_context = data_context.to(device)
             data_target = data_target.to(device)
             mc_context = mc_context.to(device)
             mc_target = mc_target.to(device)
-            if "zuko" in model_name:
-                latent_mc = model(mc_context).transform(mc_target)
-            else:
-                latent_mc = model._transform(mc_target, context=mc_context)[0]
+            latent_mc = model(mc_context).transform(mc_target)
             # replace the last column in mc_context with 0 instead of 1
             mc_context[:, -1] = 0
-            if "zuko" in model_name:
-                mc_target_corr = model(mc_context).transform.inv(latent_mc)
-            else:
-                mc_target_corr = model._transform.inverse(latent_mc, context=mc_context)[0]
+            mc_target_corr = model(mc_context).transform.inv(latent_mc)
             data_target = data_target.detach().cpu().numpy()
             data_context = data_context.detach().cpu().numpy()
             data_extra = data_extra.detach().cpu().numpy()
@@ -603,7 +690,8 @@ def plot_one(
                 mc_corr=mc_corr[var],
                 weights=mc_weights,
                 extra_name="_one_transformed",
-                writer_epoch=(writer, epoch),
+                writer_epoch=(writer, epoch) if writer is not None else None,
+                cometlogger_epoch=(comet_logger, epoch) if comet_logger is not None else None,
                 labels=None,
             )
 
@@ -616,33 +704,16 @@ def plot_one(
 
     for var in target_variables:
         data[var] = (
-            pipeline[var]
-            .inverse_transform(data[var].values.reshape(-1, 1))
-            .reshape(-1)
+            pipeline[var].inverse_transform(data[var].values.reshape(-1, 1)).reshape(-1)
         )
         mc[var] = (
-            pipeline[var]
-            .inverse_transform(mc[var].values.reshape(-1, 1))
-            .reshape(-1)
+            pipeline[var].inverse_transform(mc[var].values.reshape(-1, 1)).reshape(-1)
         )
         mc_corr[var] = (
             pipeline[var]
             .inverse_transform(mc_corr[var].values.reshape(-1, 1))
             .reshape(-1)
         )
-        if device == 0 or type(device) != int:
-            dump_main_plot(
-                data[var],
-                mc[var],
-                variable_conf=vars_config[var],
-                output_dir="",
-                subdetector=calo,
-                mc_corr=mc_corr[var],
-                weights=mc_weights,
-                extra_name="_one",
-                writer_epoch=(writer, epoch),
-                labels=None,
-            )
 
     for var in context_variables:
         data_context[var] = (
@@ -662,19 +733,42 @@ def plot_one(
     mc_df = pd.concat([mc, mc_context, mc_extra], axis=1)
     mc_corr_df = pd.concat([mc_corr, mc_context, mc_extra], axis=1)
 
-    pho_id_data = calculate_photonid_mva(data_df, calo=calo)
-    pho_id_mc = calculate_photonid_mva(mc_df, calo=calo)
-    pho_id_mc_corr = calculate_photonid_mva(mc_corr_df, calo=calo)
-    
-    dump_main_plot(
-        pho_id_data,
-        pho_id_mc,
-        vars_config["probe_mvaID"],
-        output_dir="",
-        subdetector=calo,
-        mc_corr=pho_id_mc_corr,
-        weights=mc_weights,
-        extra_name="_one",
-        labels=None,
-        writer_epoch=(writer, epoch), 
-    )
+    data_df["probe_mvaID"] = calculate_photonid_mva(data_df, calo=calo)
+    mc_df["probe_mvaID"] = calculate_photonid_mva(mc_df, calo=calo)
+    mc_corr_df["probe_mvaID"] = calculate_photonid_mva(mc_corr_df, calo=calo)
+
+    for var in target_variables + ["probe_mvaID"]:
+        if device == 0 or type(device) != int:
+            dump_main_plot(
+                data_df[var],
+                mc_df[var],
+                variable_conf=vars_config[var],
+                output_dir="",
+                subdetector=calo,
+                mc_corr=mc_corr_df[var],
+                weights=mc_weights,
+                extra_name="_one",
+                writer_epoch=(writer, epoch) if writer is not None else None,
+                cometlogger_epoch=(comet_logger, epoch) if comet_logger is not None else None,
+                labels=None,
+            )
+
+    # now plot profiles
+    if device == 0 or type(device) != int:
+        nbins = 8
+        for column in target_variables + ["probe_mvaID"]:
+            for cond_column in context_variables:
+                dump_full_profile_plot(
+                    nbins,
+                    column,
+                    cond_column,
+                    data_df,
+                    mc_df,
+                    mc_corr_df,
+                    subdetector=calo,
+                    weights=mc_weights,
+                    output_dir="",
+                    extra_name="_one",
+                    writer_epoch=(writer, epoch) if writer is not None else None,
+                    cometlogger_epoch=(comet_logger, epoch) if comet_logger is not None else None,
+                ) 
