@@ -2,8 +2,13 @@
 
 # Define the parameters
 params=(
-  "cfg_zuko0 eb"
-)
+  "cfg_zuko_mdmm16 eb"
+  "cfg_zuko_mdmm17 eb"
+  )
+
+# params=(
+#   "cfg_zuko0 eb"
+# )
 
 # Loop over the parameters
 for param in "${params[@]}"; do

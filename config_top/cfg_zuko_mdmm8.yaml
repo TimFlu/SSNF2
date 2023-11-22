@@ -40,7 +40,7 @@ model:
   penalty_weight: 0.001
   anneal: 0
 mdmm:
-  max: 0.001
+  max: 0.01
   scale: 10000
   damping: 100
 optimizer:
