@@ -8,6 +8,8 @@ from sklearn.preprocessing import LabelEncoder
 # torch
 import torch
 import torch.nn as nn
+import torch.optim as optim
+import copy
 
 
 #******* Prepare the data *******#
@@ -69,3 +71,4 @@ class Classifier(nn.Module):
 print(sum([x.reshape(-1).shape[0] for x in Classifier().parameters()]))
 
         
+#********* Training function ********#

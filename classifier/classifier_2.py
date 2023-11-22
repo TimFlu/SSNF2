@@ -7,19 +7,31 @@ from torchvision.transforms import ToTensor
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
+from sklearn.preprocessing import LabelEncoder
+
+# Get device
+device = (
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps"
+    if torch.backends.mps.is_available()
+    else "cpu"
+)
+print(f"Using {device} device")
+
 
 # ************* Create custom Dataset ************* #
 class CustomDataset(Dataset):
     def __init__(self, data, labels):
-        self.data = data
-        self.labels = labels
+        self.data = torch.tensor(data.values, dtype=torch.float32, device=device)
+        self.labels = torch.tensor(labels, dtype=torch.float32, device=device).reshape(-1, 1)
 
     def __len__(self):
-        return len(self.labels)
+        return self.data.shape[0]
     
     def __getitem__(self, index):
-        x = self.data.iloc[index]
-        y = self.labels.iloc[index]
+        x = self.data[index]
+        y = self.labels[index]
         return x, y
 
 # Create training and test data
@@ -32,6 +44,13 @@ train_label = train_data["label"]
 test = test_data.iloc[:, :-1]
 test_label = test_data["label"]
 
+# Change string labels to integers
+encoder = LabelEncoder()
+encoder.fit(train_label)
+train_label = encoder.transform(train_label)
+test_label = encoder.transform(test_label)
+
+
 train_dataset = CustomDataset(train, train_label)
 test_dataset = CustomDataset(test, test_label)
 
@@ -40,31 +59,18 @@ batch_size=64
 train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
-
 # ************** Build the Neural Network ******************
-# Get device for training
-device = (
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps"
-    if torch.backends.mps.is_available()
-    else "cpu"
-)
-print(f"Using {device} device")
-
-
-len = len(train_dataloader)
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         # self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(len, 20),
+            nn.Linear(14, 20),
             nn.ReLU(),
             nn.Linear(20, 20),
             nn.ReLU(),
             nn.Linear(20, 1),
-            nn.Sigmoid()
+            # nn.Sigmoid()
         )
     
     def forward(self, x):
@@ -84,16 +90,14 @@ batch_size = 64
 
 # **************** Train Function **************** #
 def train_loop(dataloader, model, loss_fn, optimizer):
-    print("here")
-    print(len(dataloader.dataset))
     size = len(dataloader.dataset)
-    print("hey")
     # Set the model to training mode
     model.train()
     for batch, (X, y) in enumerate(dataloader):
         # Compute prediction and loss
         pred = model(X)
         loss = loss_fn(pred, y)
+
 
         # Backpropagation
         loss.backward()
@@ -117,7 +121,7 @@ def test_loop(dataloader, model, loss_fn):
     with torch.no_grad():
         for X, y in dataloader:
             pred = model(X)
-            test_loss += loss_fn(pred, y).item
+            test_loss += loss_fn(pred, y).item()
             correct += (pred.argmax(1)== y).type(torch.float).sum().item()
 
     test_loss /= num_batches
