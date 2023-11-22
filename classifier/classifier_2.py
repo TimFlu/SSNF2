@@ -84,7 +84,10 @@ batch_size = 64
 
 # **************** Train Function **************** #
 def train_loop(dataloader, model, loss_fn, optimizer):
+    print("here")
+    print(len(dataloader.dataset))
     size = len(dataloader.dataset)
+    print("hey")
     # Set the model to training mode
     model.train()
     for batch, (X, y) in enumerate(dataloader):
