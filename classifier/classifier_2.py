@@ -50,7 +50,7 @@ encoder.fit(train_label)
 train_label = encoder.transform(train_label)
 test_label = encoder.transform(test_label)
 
-
+# Create Dataset
 train_dataset = CustomDataset(train, train_label)
 test_dataset = CustomDataset(test, test_label)
 
@@ -65,12 +65,14 @@ class NeuralNetwork(nn.Module):
         super().__init__()
         # self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(14, 20),
+            nn.Linear(14, 100),
             nn.ReLU(),
-            nn.Linear(20, 20),
+            nn.Linear(100, 100),
             nn.ReLU(),
-            nn.Linear(20, 1),
-            # nn.Sigmoid()
+            nn.Linear(100, 100),
+            nn.ReLU(),
+            nn.Linear(100, 1),
+            nn.Sigmoid()
         )
     
     def forward(self, x):
@@ -82,9 +84,9 @@ model = NeuralNetwork().to(device)
 print(model)
 
 # Define Hyperparameters
-learning_rate = 1e-3
+learning_rate = 1e-6
 epochs = 5
-batch_size = 64
+
 
 
 
@@ -97,7 +99,6 @@ def train_loop(dataloader, model, loss_fn, optimizer):
         # Compute prediction and loss
         pred = model(X)
         loss = loss_fn(pred, y)
-
 
         # Backpropagation
         loss.backward()
@@ -122,7 +123,8 @@ def test_loop(dataloader, model, loss_fn):
         for X, y in dataloader:
             pred = model(X)
             test_loss += loss_fn(pred, y).item()
-            correct += (pred.argmax(1)== y).type(torch.float).sum().item()
+            # TODO: this correct is not fit for this model. Correct it
+            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
 
     test_loss /= num_batches
     correct /= size
@@ -130,12 +132,12 @@ def test_loop(dataloader, model, loss_fn):
 
     
 # initialize the loss function and optimizer
-loss_fn = nn.CrossEntropyLoss()
+loss_fn = nn.BCELoss()
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
-epochs = 10
 
 # ********************* Actual Testing ********************* #
+epochs = 10
 for t in range(epochs):
     print(f"Epoch {t+1}\n-------------------------------")
     train_loop(train_dataloader, model, loss_fn, optimizer)
