@@ -4,10 +4,13 @@ from torch.utils.data import DataLoader
 from torch import nn
 from torchvision import datasets
 from torchvision.transforms import ToTensor
+import torchvision.models as models
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
 from sklearn.preprocessing import LabelEncoder
+import numpy as np
+import copy
 
 # Get device
 device = (
@@ -55,7 +58,7 @@ train_dataset = CustomDataset(train, train_label)
 test_dataset = CustomDataset(test, test_label)
 
 # Create Dataloader
-batch_size=64
+batch_size=512
 train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
@@ -63,20 +66,18 @@ test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
-        # self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(14, 100),
+            nn.Linear(14, 10),
             nn.ReLU(),
-            nn.Linear(100, 100),
+            nn.Linear(10, 10),
             nn.ReLU(),
-            nn.Linear(100, 100),
+            nn.Linear(10, 10),
             nn.ReLU(),
-            nn.Linear(100, 1),
+            nn.Linear(10, 1),
             nn.Sigmoid()
         )
     
     def forward(self, x):
-        # x = self.fatten(x)
         x = self.linear_relu_stack(x)
         return x
     
@@ -84,7 +85,7 @@ model = NeuralNetwork().to(device)
 print(model)
 
 # Define Hyperparameters
-learning_rate = 1e-6
+learning_rate = 1e-3
 epochs = 5
 
 
@@ -105,9 +106,11 @@ def train_loop(dataloader, model, loss_fn, optimizer):
         optimizer.step()
         optimizer.zero_grad()
 
-        if batch % 100 == 0:
+        if batch % 1000 == 0:
             loss, current = loss.item(), (batch + 1) * len(X)
-            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+            correct = (pred.round() == y).float().mean()
+            print(f"loss: {loss:>7f} Accuracy: {(100*correct):>0.1f}%  [{current:>5d}/{size:>5d}]")
+            
 
 # **************** Test Function **************** #
 def test_loop(dataloader, model, loss_fn):
@@ -117,6 +120,10 @@ def test_loop(dataloader, model, loss_fn):
     num_batches = len(dataloader)
     test_loss, correct = 0, 0
 
+    # Hold the best model
+    best_acc = -np.inf
+    best_weights = None
+
     # Evaluation the model with torch.no_grad() ensures that no gradients
     # are computed during test mode
     with torch.no_grad():
@@ -124,8 +131,12 @@ def test_loop(dataloader, model, loss_fn):
             pred = model(X)
             test_loss += loss_fn(pred, y).item()
             # TODO: this correct is not fit for this model. Correct it
-            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
-
+            correct += (pred.round() == y).float().mean()
+            # correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+            if correct > best_acc:
+                best_acc = correct
+                best_weights = copy.deepcopy(model.state_dict())
+                print("new best model")
     test_loss /= num_batches
     correct /= size
     print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
@@ -133,7 +144,8 @@ def test_loop(dataloader, model, loss_fn):
     
 # initialize the loss function and optimizer
 loss_fn = nn.BCELoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+# optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 
 # ********************* Actual Testing ********************* #

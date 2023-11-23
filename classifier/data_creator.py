@@ -20,9 +20,18 @@ def main():
     del mc_eb_test["weight"]
     del mc_eb_train["weight"]
 
+    # take the same amount of samples from data and mc for the training
+    num_samples_train = min(len(data_eb_train), len(mc_eb_train))
+    balanced_data_train = data_eb_train[:num_samples_train]
+    balanced_mc_train = mc_eb_train[:num_samples_train]
+
+    num_samples_test = min(len(data_eb_test), len(mc_eb_test))
+    balanced_data_test = data_eb_test[:num_samples_test]
+    balanced_mc_test = mc_eb_test[:num_samples_test]
+    
     # concat the training and test data
-    test_data = pd.concat([data_eb_test, mc_eb_test], axis=0)
-    train_data = pd.concat([data_eb_train, mc_eb_train], axis=0)
+    test_data = pd.concat([balanced_data_test, balanced_mc_test], axis=0)
+    train_data = pd.concat([balanced_data_train, balanced_mc_train], axis=0)
 
     # save data in folder as parquet
     folder_name = "SSNF2/classifier/data/"
