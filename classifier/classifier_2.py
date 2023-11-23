@@ -1,3 +1,4 @@
+# torch
 import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
@@ -5,12 +6,14 @@ from torch import nn
 from torchvision import datasets
 from torchvision.transforms import ToTensor
 import torchvision.models as models
+# other
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
 from sklearn.preprocessing import LabelEncoder
 import numpy as np
 import copy
+from utils import plot_loss_function
 
 # Get device
 device = (
@@ -58,7 +61,7 @@ train_dataset = CustomDataset(train, train_label)
 test_dataset = CustomDataset(test, test_label)
 
 # Create Dataloader
-batch_size=512
+batch_size = 128
 train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
@@ -67,13 +70,11 @@ class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(14, 10),
+            nn.Linear(14, 200),
             nn.ReLU(),
-            nn.Linear(10, 10),
+            nn.Linear(200, 200),
             nn.ReLU(),
-            nn.Linear(10, 10),
-            nn.ReLU(),
-            nn.Linear(10, 1),
+            nn.Linear(200, 1),
             nn.Sigmoid()
         )
     
@@ -84,12 +85,6 @@ class NeuralNetwork(nn.Module):
 model = NeuralNetwork().to(device)
 print(model)
 
-# Define Hyperparameters
-learning_rate = 1e-3
-epochs = 5
-
-
-
 
 # **************** Train Function **************** #
 def train_loop(dataloader, model, loss_fn, optimizer):
@@ -98,9 +93,11 @@ def train_loop(dataloader, model, loss_fn, optimizer):
     model.train()
     for batch, (X, y) in enumerate(dataloader):
         # Compute prediction and loss
+        # print(X)
+        # print(y.reshape(1, -1))
         pred = model(X)
         loss = loss_fn(pred, y)
-
+        # print(pred.reshape(1, -1))
         # Backpropagation
         loss.backward()
         optimizer.step()
@@ -110,7 +107,7 @@ def train_loop(dataloader, model, loss_fn, optimizer):
             loss, current = loss.item(), (batch + 1) * len(X)
             correct = (pred.round() == y).float().mean()
             print(f"loss: {loss:>7f} Accuracy: {(100*correct):>0.1f}%  [{current:>5d}/{size:>5d}]")
-            
+    return loss.item()
 
 # **************** Test Function **************** #
 def test_loop(dataloader, model, loss_fn):
@@ -120,39 +117,44 @@ def test_loop(dataloader, model, loss_fn):
     num_batches = len(dataloader)
     test_loss, correct = 0, 0
 
-    # Hold the best model
-    best_acc = -np.inf
-    best_weights = None
-
     # Evaluation the model with torch.no_grad() ensures that no gradients
     # are computed during test mode
     with torch.no_grad():
         for X, y in dataloader:
             pred = model(X)
             test_loss += loss_fn(pred, y).item()
-            # TODO: this correct is not fit for this model. Correct it
             correct += (pred.round() == y).float().mean()
-            # correct += (pred.argmax(1) == y).type(torch.float).sum().item()
-            if correct > best_acc:
-                best_acc = correct
-                best_weights = copy.deepcopy(model.state_dict())
-                print("new best model")
+
     test_loss /= num_batches
     correct /= size
     print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
-
     
+    return test_loss
+
+# ******** classifier function containing training, testing and keeping track of results ********
+def classify(train_dataloader, test_dataloader, model, loss_fn, optimizer, epochs=10):
+    # keep track of models loss
+    train_loss_list = []
+    test_loss_list = []
+
+    for t in range(epochs):
+        print(f"Epoch {t+1}\n-------------------------------")
+        train_loss = train_loop(train_dataloader, model, loss_fn, optimizer)
+        test_loss = test_loop(test_dataloader, model, loss_fn)
+        train_loss_list.append(train_loss)
+        test_loss_list.append(test_loss)
+    plot_loss_function(training_loss=train_loss_list, testing_loss=test_loss_list)
+    print("Done")
+        
+
+# ********************* Actual Testing ********************* #
+# Define Hyperparameters
+learning_rate = 1e-6
+epochs = 50
 # initialize the loss function and optimizer
 loss_fn = nn.BCELoss()
 # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-
-# ********************* Actual Testing ********************* #
-epochs = 10
-for t in range(epochs):
-    print(f"Epoch {t+1}\n-------------------------------")
-    train_loop(train_dataloader, model, loss_fn, optimizer)
-    test_loop(test_dataloader, model, loss_fn)
-
-print("Done")
+# Run the classifier
+classify(train_dataloader, test_dataloader, model, loss_fn, optimizer, epochs)
