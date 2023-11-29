@@ -13,24 +13,19 @@ import os
 from sklearn.preprocessing import LabelEncoder
 import numpy as np
 import copy
-from plots_classifier import plot_loss_function, plot_data
 import pickle as pkl
+# self written
+from utils.plots_classifier import plot_loss_function, plot_data
+from utils.models import SimpleNN
+# logging
+import logging
+logger = logging.getLogger(__name__)
 
-
-# Get device
-device = (
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps"
-    if torch.backends.mps.is_available()
-    else "cpu"
-)
-print(f"Using {device} device")
 
 
 # ************* Create custom Dataset ************* #
 class CustomDataset(Dataset):
-    def __init__(self, data, labels, pipelines=None):
+    def __init__(self, data, labels, pipelines=None, device=None):
         self.data = data
         self.labels = torch.tensor(labels, dtype=torch.float32, device=device).reshape(-1, 1)
         self.pipelines = pipelines
@@ -56,69 +51,42 @@ class CustomDataset(Dataset):
         y = self.labels[index]
         return x, y
 
-# Create training and test data
-train_data = pd.read_parquet("/work/tfluehma/git/SSNF2/classifier/data/train_data.parquet")
-test_data = pd.read_parquet("/work/tfluehma/git/SSNF2/classifier/data/test_data.parquet")
+# ********* Create training and test data ********* #
+def create_data(device):
+    train_data = pd.read_parquet("/work/tfluehma/git/SSNF2/classifier/data/train_data.parquet")
+    test_data = pd.read_parquet("/work/tfluehma/git/SSNF2/classifier/data/test_data.parquet")
 
-train = train_data.iloc[:, :-1]
-train_label = train_data["label"]
+    train = train_data.iloc[:, :-1]
+    train_label = train_data["label"]
 
-test = test_data.iloc[:, :-1]
-test_label = test_data["label"]
+    test = test_data.iloc[:, :-1]
+    test_label = test_data["label"]
 
-# Change string labels to integers
-encoder = LabelEncoder()
-encoder.fit(train_label)
-train_label = encoder.transform(train_label)
-test_label = encoder.transform(test_label)
+    # Change string labels to integers
+    encoder = LabelEncoder()
+    encoder.fit(train_label)
+    train_label = encoder.transform(train_label)
+    test_label = encoder.transform(test_label)
 
-# Define the pipelines
-with open("/work/tfluehma/git/SSNF2/preprocess/pipelines_eb.pkl", "rb") as file:
-    pipelines = pkl.load(file)
-    pipelines = pipelines["pipe1"]
+    # Define the pipelines
+    with open("/work/tfluehma/git/SSNF2/preprocess/pipelines_eb.pkl", "rb") as file:
+        pipelines = pkl.load(file)
+        pipelines = pipelines["pipe1"]
 
-# Create Dataset
-train_dataset = CustomDataset(train, train_label, pipelines=pipelines)
-test_dataset = CustomDataset(test, test_label, pipelines=pipelines)
+    # Create Dataset
+    train_dataset = CustomDataset(train, train_label, pipelines=pipelines, device=device)
+    test_dataset = CustomDataset(test, test_label, pipelines=pipelines, device=device)
 
-# Plot the data to verify preprocessing worked
-# plot_data(train_dataset.data, keys=train.keys())
+    # Plot the data to verify preprocessing worked
+    plot_data(train_dataset.data, keys=train.keys())
 
-# Create Dataloader
-batch_size = 32
-train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+    # Create Dataloader
+    batch_size = 32
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+    return train_dataloader, test_dataloader
 
-# ************** Build the Neural Network ******************
-class NeuralNetwork(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(14, 400),
-            nn.ReLU(),
-            nn.Linear(400, 400),
-            nn.ReLU(),
-            nn.Linear(400, 400),
-            nn.ReLU(),
-            nn.Linear(400, 400),
-            nn.ReLU(),
-            nn.Linear(400, 400),
-            nn.ReLU(),
-            nn.Linear(400, 400),
-            nn.ReLU(),
-            nn.Linear(400, 1),
-            nn.Sigmoid()
-        )
-    
-    def forward(self, x):
-        x = self.linear_relu_stack(x)
-        return x
-    
-model = NeuralNetwork().to(device)
-print(model)
-
-
-# **************** Train Function **************** #
+# **************** Train Function ***************** #
 def train_loop(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     # Set the model to training mode
@@ -138,10 +106,10 @@ def train_loop(dataloader, model, loss_fn, optimizer):
         if batch % 1000 == 0:
             loss, current = loss.item(), (batch + 1) * len(X)
             correct = (pred.round() == y).float().mean()
-            print(f"loss: {loss:>7f} Accuracy: {(100*correct):>0.1f}%  [{current:>5d}/{size:>5d}]")
+            logger.info(f"loss: {loss:>7f} Accuracy: {(100*correct):>0.1f}%  [{current:>5d}/{size:>5d}]")
     return loss.item()
 
-# **************** Test Function **************** #
+# ***************** Test Function ***************** #
 def test_loop(dataloader, model, loss_fn):
     # Set the model to evaluation mode
     model.eval()
@@ -159,18 +127,36 @@ def test_loop(dataloader, model, loss_fn):
 
     test_loss /= num_batches
     correct /= size
-    print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+    logger.info(f"Testing Error: Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
     
     return test_loss
 
 # ******** classifier function containing training, testing and keeping track of results ********
-def classify(train_dataloader, test_dataloader, model, loss_fn, optimizer, epochs=10):
+def classify(device, cfg):
+    # create the datasets
+    train_dataloader, test_dataloader = create_data(device)
+
+    # create model
+    input_size = train_dataloader.dataset.data.shape[1]
+    num_layers = cfg.model.num_layers
+    hidden_size = cfg.model.hidden_size
+    model = SimpleNN(input_size, hidden_size, num_layers).to(device)
+    logger.info("Training with Model: \n{}".format(model))
+    # Define Hyperparameters
+    learning_rate = cfg.hyperparameters.learning_rate
+    epochs = 100
+
+    # initialize the loss function and optimizer
+    loss_fn = nn.BCELoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    # **** Train and Test ****
     # keep track of models loss
     train_loss_list = []
     test_loss_list = []
-
     for t in range(epochs):
-        print(f"Epoch {t+1}\n-------------------------------")
+        logger.info(f"Epoch {t+1}\n-------------------------------")
         train_loss = train_loop(train_dataloader, model, loss_fn, optimizer)
         test_loss = test_loop(test_dataloader, model, loss_fn)
 
@@ -180,14 +166,3 @@ def classify(train_dataloader, test_dataloader, model, loss_fn, optimizer, epoch
     print("Done")
         
 
-# ********************* Actual Testing ********************* #
-# Define Hyperparameters
-learning_rate = 1e-3
-epochs = 100
-# initialize the loss function and optimizer
-loss_fn = nn.BCELoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-# optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
-# Run the classifier
-classify(train_dataloader, test_dataloader, model, loss_fn, optimizer, epochs)
