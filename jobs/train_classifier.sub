@@ -1,0 +1,16 @@
+#! /bin/bash
+
+#SBATCH -J train_classifier-{param1}
+#SBATCH --output=/work/tfluehma/git/SSNF2/jobs/classifier-{param1}.out
+#SBATCH --error=/work/tfluehma/git/SSNF2/jobs/classifier-{param1}.err
+
+#SBATCH --account=gpu_gres               # to access gpu resources
+#SBATCH --partition=gpu                                           
+#SBATCH --nodes=1                        # request to run job on single node                                       
+#SBATCH --ntasks=10                      # request 10 CPU's (t3gpu01/02: balance between CPU and GPU : 5CPU/1GPU)      
+#SBATCH --gres=gpu:1                     # request  for one GPU's on machine, this is total  amount of GPUs for job        
+#SBATCH --mem=20G                        # memory (per job)
+#SBATCH --time=70:00:00
+#SBATCH --gres-flags=disable-binding
+
+/work/tfluehma/mambaforge/envs/FFF-minimal/bin/python /work/tfluehma/git/SSNF2/classifier/run_classifier.py --config-name {param1}

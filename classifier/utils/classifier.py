@@ -18,6 +18,7 @@ import pickle as pkl
 from utils.plots_classifier import plot_loss_function, plot_data
 from utils.models import SimpleNN
 # logging
+from utils.log import setup_comet_logger
 import logging
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,10 @@ def classify(device, cfg):
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
     # optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
+    # Setup Comet logger
+    comet_name = os.getcwd().split("/")[-1]
+    comet_logger = setup_comet_logger(comet_name, cfg.model)
+
     # **** Train and Test ****
     # keep track of models loss
     train_loss_list = []
@@ -159,7 +164,7 @@ def classify(device, cfg):
         logger.info(f"Epoch {t+1}\n-------------------------------")
         train_loss = train_loop(train_dataloader, model, loss_fn, optimizer)
         test_loss = test_loop(test_dataloader, model, loss_fn)
-
+        comet_logger.log_metrics({"train": train_loss, "test": test_loss}, step=t)
         train_loss_list.append(train_loss)
         test_loss_list.append(test_loss)
     plot_loss_function(training_loss=train_loss_list, testing_loss=test_loss_list)
