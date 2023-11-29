@@ -13,7 +13,9 @@ import os
 from sklearn.preprocessing import LabelEncoder
 import numpy as np
 import copy
-from utils import plot_loss_function
+from plots_classifier import plot_loss_function, plot_data
+import pickle as pkl
+
 
 # Get device
 device = (
@@ -28,9 +30,23 @@ print(f"Using {device} device")
 
 # ************* Create custom Dataset ************* #
 class CustomDataset(Dataset):
-    def __init__(self, data, labels):
-        self.data = torch.tensor(data.values, dtype=torch.float32, device=device)
+    def __init__(self, data, labels, pipelines=None):
+        self.data = data
         self.labels = torch.tensor(labels, dtype=torch.float32, device=device).reshape(-1, 1)
+        self.pipelines = pipelines
+        self.all_variables = ["probe_pt", "probe_eta", "probe_phi", "probe_fixedGridRhoAll", "probe_r9", "probe_s4",
+                              "probe_sieie", "probe_sieip", "probe_etaWidth", "probe_phiWidth", "probe_pfPhoIso03",
+                              "probe_pfChargedIsoPFPV", "probe_pfChargedIsoWorstVtx", "probe_energyRaw"]
+        
+        if self.pipelines is not None:
+            for var, pipeline in self.pipelines.items():
+                if var in self.all_variables:
+                    trans = (
+                        pipeline.transform
+                    )
+                    data[var] = trans(data[var].values.reshape(-1, 1)).reshape(-1)
+
+        self.data = torch.tensor(data.values, dtype=torch.float32, device=device)
 
     def __len__(self):
         return self.data.shape[0]
@@ -56,12 +72,20 @@ encoder.fit(train_label)
 train_label = encoder.transform(train_label)
 test_label = encoder.transform(test_label)
 
+# Define the pipelines
+with open("/work/tfluehma/git/SSNF2/preprocess/pipelines_eb.pkl", "rb") as file:
+    pipelines = pkl.load(file)
+    pipelines = pipelines["pipe1"]
+
 # Create Dataset
-train_dataset = CustomDataset(train, train_label)
-test_dataset = CustomDataset(test, test_label)
+train_dataset = CustomDataset(train, train_label, pipelines=pipelines)
+test_dataset = CustomDataset(test, test_label, pipelines=pipelines)
+
+# Plot the data to verify preprocessing worked
+# plot_data(train_dataset.data, keys=train.keys())
 
 # Create Dataloader
-batch_size = 128
+batch_size = 32
 train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
@@ -70,11 +94,19 @@ class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(14, 200),
+            nn.Linear(14, 400),
             nn.ReLU(),
-            nn.Linear(200, 200),
+            nn.Linear(400, 400),
             nn.ReLU(),
-            nn.Linear(200, 1),
+            nn.Linear(400, 400),
+            nn.ReLU(),
+            nn.Linear(400, 400),
+            nn.ReLU(),
+            nn.Linear(400, 400),
+            nn.ReLU(),
+            nn.Linear(400, 400),
+            nn.ReLU(),
+            nn.Linear(400, 1),
             nn.Sigmoid()
         )
     
@@ -141,6 +173,7 @@ def classify(train_dataloader, test_dataloader, model, loss_fn, optimizer, epoch
         print(f"Epoch {t+1}\n-------------------------------")
         train_loss = train_loop(train_dataloader, model, loss_fn, optimizer)
         test_loss = test_loop(test_dataloader, model, loss_fn)
+
         train_loss_list.append(train_loss)
         test_loss_list.append(test_loss)
     plot_loss_function(training_loss=train_loss_list, testing_loss=test_loss_list)
@@ -149,12 +182,12 @@ def classify(train_dataloader, test_dataloader, model, loss_fn, optimizer, epoch
 
 # ********************* Actual Testing ********************* #
 # Define Hyperparameters
-learning_rate = 1e-6
-epochs = 50
+learning_rate = 1e-3
+epochs = 100
 # initialize the loss function and optimizer
 loss_fn = nn.BCELoss()
-# optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+# optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 # Run the classifier
 classify(train_dataloader, test_dataloader, model, loss_fn, optimizer, epochs)

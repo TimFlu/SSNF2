@@ -2,7 +2,7 @@ import pandas as pd
 import os
 
 def main():
-    # Read in preprocessed data
+    # Read in preprocessed data <- this is unprocessed -> also plot to be sure
     data_eb_test = pd.read_parquet("SSNF2/preprocess/data_eb_test.parquet")
     data_eb_train = pd.read_parquet("SSNF2/preprocess/data_eb_train.parquet")
     mc_eb_test = pd.read_parquet("SSNF2/preprocess/mc_eb_test.parquet")
