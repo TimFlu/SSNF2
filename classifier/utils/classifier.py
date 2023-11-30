@@ -56,7 +56,7 @@ class CustomDataset(Dataset):
 # ********* Create training and test data ********* #
 def create_data(device, cfg):
 
-    if cfg.data_name == "sonar":
+    if cfg.data.name == "sonar":
         sonar_data = pd.read_csv("/work/tfluehma/git/SSNF2/classifier/data/sonar_data.csv")
         X = sonar_data.iloc[:, 0:60]
         y = sonar_data.iloc[:, 60]
@@ -71,7 +71,7 @@ def create_data(device, cfg):
         train_dataset_sonar = CustomDataset(X_train, y_train, device=device)
         test_dataset_sonar = CustomDataset(X_test, y_test, device=device)
         # Create DataLoader
-        batch_size = cfg.batch_size
+        batch_size = cfg.hyperparameters.batch_size
         train_dataloader = DataLoader(train_dataset_sonar, batch_size=batch_size, shuffle=True)
         test_dataloader = DataLoader(test_dataset_sonar, batch_size=batch_size, shuffle=True)
 
@@ -104,7 +104,7 @@ def create_data(device, cfg):
         plot_data(train_dataset.data, keys=train.keys())
 
         # Create Dataloader
-        batch_size = cfg.batch_size
+        batch_size = cfg.hyperparameters.batch_size
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
     
