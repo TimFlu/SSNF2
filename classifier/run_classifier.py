@@ -33,6 +33,6 @@ def main(cfg):
     logger.debug("Using {}".format(device))
     classify(device, cfg)
 
-    
+
 if __name__ == "__main__":
     main()

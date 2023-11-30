@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import os
 from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
 import numpy as np
 import copy
 import pickle as pkl
@@ -53,38 +54,60 @@ class CustomDataset(Dataset):
         return x, y
 
 # ********* Create training and test data ********* #
-def create_data(device):
-    train_data = pd.read_parquet("/work/tfluehma/git/SSNF2/classifier/data/train_data.parquet")
-    test_data = pd.read_parquet("/work/tfluehma/git/SSNF2/classifier/data/test_data.parquet")
+def create_data(device, cfg):
 
-    train = train_data.iloc[:, :-1]
-    train_label = train_data["label"]
+    if cfg.data_name == "sonar":
+        sonar_data = pd.read_csv("/work/tfluehma/git/SSNF2/classifier/data/sonar_data.csv")
+        X = sonar_data.iloc[:, 0:60]
+        y = sonar_data.iloc[:, 60]
 
-    test = test_data.iloc[:, :-1]
-    test_label = test_data["label"]
+        # Change string labels to integers
+        encoder = LabelEncoder()
+        encoder.fit(y)
+        y = encoder.transform(y)
+        # Convert the data into pytorch tensors
+        X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=0.7, shuffle=True)
+        # Create Dataset
+        train_dataset_sonar = CustomDataset(X_train, y_train, device=device)
+        test_dataset_sonar = CustomDataset(X_test, y_test, device=device)
+        # Create DataLoader
+        batch_size = cfg.batch_size
+        train_dataloader = DataLoader(train_dataset_sonar, batch_size=batch_size, shuffle=True)
+        test_dataloader = DataLoader(test_dataset_sonar, batch_size=batch_size, shuffle=True)
 
-    # Change string labels to integers
-    encoder = LabelEncoder()
-    encoder.fit(train_label)
-    train_label = encoder.transform(train_label)
-    test_label = encoder.transform(test_label)
+    else:
+        train_data = pd.read_parquet("/work/tfluehma/git/SSNF2/classifier/data/train_data.parquet")
+        test_data = pd.read_parquet("/work/tfluehma/git/SSNF2/classifier/data/test_data.parquet")
 
-    # Define the pipelines
-    with open("/work/tfluehma/git/SSNF2/preprocess/pipelines_eb.pkl", "rb") as file:
-        pipelines = pkl.load(file)
-        pipelines = pipelines["pipe1"]
+        train = train_data.iloc[:, :-1]
+        train_label = train_data["label"]
 
-    # Create Dataset
-    train_dataset = CustomDataset(train, train_label, pipelines=pipelines, device=device)
-    test_dataset = CustomDataset(test, test_label, pipelines=pipelines, device=device)
+        test = test_data.iloc[:, :-1]
+        test_label = test_data["label"]
 
-    # Plot the data to verify preprocessing worked
-    plot_data(train_dataset.data, keys=train.keys())
+        # Change string labels to integers
+        encoder = LabelEncoder()
+        encoder.fit(train_label)
+        train_label = encoder.transform(train_label)
+        test_label = encoder.transform(test_label)
 
-    # Create Dataloader
-    batch_size = 32
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+        # Define the pipelines
+        with open("/work/tfluehma/git/SSNF2/preprocess/pipelines_eb.pkl", "rb") as file:
+            pipelines = pkl.load(file)
+            pipelines = pipelines["pipe1"]
+
+        # Create Dataset
+        train_dataset = CustomDataset(train, train_label, pipelines=pipelines, device=device)
+        test_dataset = CustomDataset(test, test_label, pipelines=pipelines, device=device)
+
+        # Plot the data to verify preprocessing worked
+        plot_data(train_dataset.data, keys=train.keys())
+
+        # Create Dataloader
+        batch_size = cfg.batch_size
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+    
     return train_dataloader, test_dataloader
 
 # **************** Train Function ***************** #
@@ -92,23 +115,21 @@ def train_loop(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     # Set the model to training mode
     model.train()
+    epoch_loss = 0.0
     for batch, (X, y) in enumerate(dataloader):
         # Compute prediction and loss
-        # print(X)
-        # print(y.reshape(1, -1))
         pred = model(X)
         loss = loss_fn(pred, y)
-        # print(pred.reshape(1, -1))
         # Backpropagation
+        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        optimizer.zero_grad()
-
-        if batch % 1000 == 0:
-            loss, current = loss.item(), (batch + 1) * len(X)
+        epoch_loss += loss.item()
+        if batch % 5000 == 0:
+            testing_loss, current = loss.item(), (batch + 1) * len(X)
             correct = (pred.round() == y).float().mean()
-            logger.info(f"loss: {loss:>7f} Accuracy: {(100*correct):>0.1f}%  [{current:>5d}/{size:>5d}]")
-    return loss.item()
+            logger.info(f"current batch loss: {testing_loss:>7f} Accuracy: {(100*correct):>0.1f}%  [{current:>5d}/{size:>5d}]")
+    return epoch_loss
 
 # ***************** Test Function ***************** #
 def test_loop(dataloader, model, loss_fn):
@@ -124,19 +145,18 @@ def test_loop(dataloader, model, loss_fn):
         for X, y in dataloader:
             pred = model(X)
             test_loss += loss_fn(pred, y).item()
-            correct += (pred.round() == y).float().mean()
+            correct += (pred.round() == y).float().sum()
 
-    test_loss /= num_batches
+    test_loss
     correct /= size
-    logger.info(f"Testing Error: Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+    logger.info(f"Complete Test loss: {test_loss:>8f}, Total Accuracy: {(100*correct):>0.1f}% \n")
     
-    return test_loss
+    return test_loss, 100*correct
 
 # ******** classifier function containing training, testing and keeping track of results ********
 def classify(device, cfg):
     # create the datasets
-    train_dataloader, test_dataloader = create_data(device)
-
+    train_dataloader, test_dataloader = create_data(device, cfg)
     # create model
     input_size = train_dataloader.dataset.data.shape[1]
     num_layers = cfg.model.num_layers
@@ -149,12 +169,13 @@ def classify(device, cfg):
 
     # initialize the loss function and optimizer
     loss_fn = nn.BCELoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-    # optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Setup Comet logger
-    comet_name = os.getcwd().split("/")[-1]
-    comet_logger = setup_comet_logger(comet_name, cfg.model)
+    if cfg.logger:
+        comet_name = os.getcwd().split("/")[-1]
+        comet_logger = setup_comet_logger(comet_name, cfg.model)
 
     # **** Train and Test ****
     # keep track of models loss
@@ -163,11 +184,12 @@ def classify(device, cfg):
     for t in range(epochs):
         logger.info(f"Epoch {t+1}\n-------------------------------")
         train_loss = train_loop(train_dataloader, model, loss_fn, optimizer)
-        test_loss = test_loop(test_dataloader, model, loss_fn)
-        comet_logger.log_metrics({"train": train_loss, "test": test_loss}, step=t)
+        test_loss, test_accuracy = test_loop(test_dataloader, model, loss_fn)
+        if cfg.logger:
+            comet_logger.log_metrics({"epoch_train_loss": train_loss, "total_test_loss": test_loss,
+                                       "test_accuracy": test_accuracy}, step=t)
         train_loss_list.append(train_loss)
         test_loss_list.append(test_loss)
     plot_loss_function(training_loss=train_loss_list, testing_loss=test_loss_list)
-    print("Done")
         
 
