@@ -16,7 +16,7 @@ import numpy as np
 import copy
 import pickle as pkl
 # self written
-from utils.plots_classifier import plot_loss_function, plot_data
+from utils.plots_classifier import plot_loss_function, plot_data, roc_plot
 from utils.models import SimpleNN
 # logging
 from utils.log import setup_comet_logger
@@ -191,5 +191,9 @@ def classify(device, cfg):
         train_loss_list.append(train_loss)
         test_loss_list.append(test_loss)
     plot_loss_function(training_loss=train_loss_list, testing_loss=test_loss_list)
+    fpr, tpr= roc_plot(train_dataloader, model)
+    if cfg.logger:
+        comet_logger.log_metrics({"roc_fpr": fpr, "roc_tpr": tpr})
+
         
 

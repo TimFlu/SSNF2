@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.metrics import roc_curve
+import torch
 
 
 
@@ -22,3 +24,18 @@ def plot_data(data, keys):
         ax[i].hist(data_.iloc[:, i], bins=100, label=key)
         ax[i].legend(loc="best")
     plt.savefig("/work/tfluehma/git/SSNF2/classifier/data/preprocessed")
+
+def roc_plot(train_dataloader, model):
+    with torch.no_grad():
+        plt.figure()
+        y_test = train_dataloader.dataset.labels.to("cpu")
+        X_test = train_dataloader.dataset.data
+        y_pred = model(X_test)
+        y_pred = y_pred.to("cpu")
+        fpr, tpr, thresholds = roc_curve(y_test, y_pred)
+        plt.plot(fpr, tpr)
+        plt.title("Receiver Operating Characteristics")
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.savefig("/work/tfluehma/git/SSNF2/classifier/data/ROC")
+        return fpr, tpr
