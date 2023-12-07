@@ -1,4 +1,5 @@
 # torch
+from typing import Any
 import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
@@ -23,7 +24,28 @@ from utils.log import setup_comet_logger
 import logging
 logger = logging.getLogger(__name__)
 
-
+# **************** Early Stopping ***************** #
+class EarlyStopping:
+    def __init__(self, patience=5, min_delta=1):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = 10e10
+        self.early_stop = False
+    
+    def __call__(self, val_loss):
+        relative_loss = (self.best_loss - val_loss) / self.best_loss * 100
+        if relative_loss > self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+        elif relative_loss < self.min_delta:
+            self.counter += 1
+            logger.info(
+                f"Early stopping counter: {self.counter} out of {self.patience}"
+            )
+            if self.counter >= self.patience:
+                logger.info("Early stopping")
+                self.early_stop = True
 
 # ************* Create custom Dataset ************* #
 class CustomDataset(Dataset):
@@ -113,6 +135,7 @@ def create_data(device, cfg):
 # **************** Train Function ***************** #
 def train_loop(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
+    num_batches = len(dataloader)
     # Set the model to training mode
     model.train()
     epoch_loss = 0.0
@@ -129,7 +152,7 @@ def train_loop(dataloader, model, loss_fn, optimizer):
             testing_loss, current = loss.item(), (batch + 1) * len(X)
             correct = (pred.round() == y).float().mean()
             logger.info(f"current batch loss: {testing_loss:>7f} Accuracy: {(100*correct):>0.1f}%  [{current:>5d}/{size:>5d}]")
-    return epoch_loss
+    return epoch_loss / num_batches
 
 # ***************** Test Function ***************** #
 def test_loop(dataloader, model, loss_fn):
@@ -137,24 +160,27 @@ def test_loop(dataloader, model, loss_fn):
     model.eval()
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
-    test_loss, correct = 0, 0
+    epoch_test_loss, correct = 0, 0
 
     # Evaluation the model with torch.no_grad() ensures that no gradients
     # are computed during test mode
     with torch.no_grad():
         for X, y in dataloader:
             pred = model(X)
-            test_loss += loss_fn(pred, y).item()
+            epoch_test_loss += loss_fn(pred, y).item()
             correct += (pred.round() == y).float().sum()
 
-    test_loss
+    avg_batch_test_loss = epoch_test_loss / num_batches
     correct /= size
-    logger.info(f"Complete Test loss: {test_loss:>8f}, Total Accuracy: {(100*correct):>0.1f}% \n")
+    logger.info(f"Avg Test loss per batch: {avg_batch_test_loss:>8f}, Total Accuracy: {(100*correct):>0.1f}% \n")
     
-    return test_loss, 100*correct
+    return avg_batch_test_loss, 100*correct
 
 # ******** classifier function containing training, testing and keeping track of results ********
 def classify(device, cfg):
+    # Initialize early stopping
+    early_stopping = EarlyStopping(patience=cfg.stopper.patience, min_delta=cfg.stopper.min_delta)
+    best_test_loss = 100000000
     # create the datasets
     train_dataloader, test_dataloader = create_data(device, cfg)
     # create model
@@ -165,7 +191,7 @@ def classify(device, cfg):
     logger.info("Training with Model: \n{}".format(model))
     # Define Hyperparameters
     learning_rate = cfg.hyperparameters.learning_rate
-    epochs = 100
+    epochs = cfg.hyperparameters.epochs
 
     # initialize the loss function and optimizer
     loss_fn = nn.BCELoss()
@@ -175,7 +201,7 @@ def classify(device, cfg):
     # Setup Comet logger
     if cfg.logger:
         comet_name = os.getcwd().split("/")[-1]
-        comet_logger = setup_comet_logger(comet_name, cfg.model)
+        comet_logger = setup_comet_logger(comet_name, cfg)
 
     # **** Train and Test ****
     # keep track of models loss
@@ -183,17 +209,30 @@ def classify(device, cfg):
     test_loss_list = []
     for t in range(epochs):
         logger.info(f"Epoch {t+1}\n-------------------------------")
+        # loss is averaged per batch
         train_loss = train_loop(train_dataloader, model, loss_fn, optimizer)
         test_loss, test_accuracy = test_loop(test_dataloader, model, loss_fn)
         if cfg.logger:
-            comet_logger.log_metrics({"epoch_train_loss": train_loss, "total_test_loss": test_loss,
+            comet_logger.log_metrics({"avg_batch_train_loss": train_loss, "avg_batch_test_loss": test_loss,
                                        "test_accuracy": test_accuracy}, step=t)
         train_loss_list.append(train_loss)
         test_loss_list.append(test_loss)
+        # save the best model
+        if test_loss < best_test_loss:
+            logger.info("New best test loss, saving model...")
+            best_test_loss = test_loss
+            torch.save(model.state_dict(), "./best_model_weights.pth")
+        # save the latest model
+        torch.save(model.state_dict(), "./latest_model_weights.pth")
+        # Check if stopping early
+        early_stopping(train_loss)
+        if early_stopping.early_stop:
+            break
+
+    # plot the loss functions and ROC curve
     plot_loss_function(training_loss=train_loss_list, testing_loss=test_loss_list)
-    fpr, tpr= roc_plot(train_dataloader, model)
-    if cfg.logger:
-        comet_logger.log_metrics({"roc_fpr": fpr, "roc_tpr": tpr})
+    roc_plot(test_dataloader, cfg, device)
+
 
         
 
