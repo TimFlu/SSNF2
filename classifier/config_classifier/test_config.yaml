@@ -7,12 +7,41 @@ hyperparameters:
   learning_rate: 1e-4
   batch_size: 64
   epochs: 3
+optimizer: Adam # or SGD
 model:
   num_layers: 2
   hidden_size: 5
 data: 
   name: ssnf
-logger: True
+logger: False
 stopper:
   patience: 10
   min_delta: 0.05
+checkpoints:
+  data: /work/tfluehma/git/SSNF2/outputs/base_cfg_zuko0_data_eb-2023-10-26-10-22-54
+  mc : /work/tfluehma/git/SSNF2/outputs/base_cfg_zuko0_mc_eb-2023-11-01-10-52-57
+  top: /work/tfluehma/git/SSNF2/outputs/top_cfg_zuko_mdmm4_eb-2023-11-08-13-03-33
+fff_model:
+  name: zuko_nsf
+  ntransforms: 12
+  nbins: 16
+  nnodes: 512
+  nlayers: 4
+  penalty: l1
+  penalty_weight: 0.1
+  anneal: 0
+context_variables:
+  - probe_pt
+  - probe_eta
+  - probe_phi
+  - probe_fixedGridRhoAll
+target_variables:
+  - probe_r9
+  - probe_s4
+  - probe_sieie
+  - probe_sieip
+  - probe_etaWidth
+  - probe_phiWidth
+  - probe_pfPhoIso03
+  - probe_pfChargedIsoPFPV
+  - probe_pfChargedIsoWorstVtx

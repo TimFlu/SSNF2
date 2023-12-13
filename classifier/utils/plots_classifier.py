@@ -4,7 +4,8 @@ import pandas as pd
 from sklearn.metrics import roc_curve
 import torch
 import os
-from utils.models import SimpleNN
+from utils.models import SimpleNN, get_zuko_nsf, load_fff_model
+
 
 
 def plot_loss_function(training_loss, testing_loss):
@@ -55,7 +56,7 @@ def roc_plot(train_dataloader, cfg, device):
     else:
         print(f"Folder '{folder_name}' already exists.")
     
-    # create and load mode with best weights
+    # create and load model with best weights
     input_size = train_dataloader.dataset.data.shape[1]
     num_layers = cfg.model.num_layers
     hidden_size = cfg.model.hidden_size
@@ -77,3 +78,36 @@ def roc_plot(train_dataloader, cfg, device):
         plt.ylabel("True Positive Rate")
         plt.legend()
         plt.savefig(folder_name + "/ROC")
+
+
+def roc_plot_corrected_mc(mc_uncorr_dataloader, cfg, device):
+    # load the corrected fff model
+    flow_params_dct = {
+            "input_dim": 9,
+            "context_dim": 4,
+            "ntransforms": cfg.fff_model.ntransforms,
+            "nbins": cfg.fff_model.nbins,
+            "nnodes": cfg.fff_model.nnodes,
+            "nlayers": cfg.fff_model.nlayers,
+        }
+    penalty = {
+        "penalty_type": cfg.fff_model.penalty,
+        "penalty_weight": cfg.fff_model.penalty_weight,
+        "anneal": cfg.fff_model.anneal,
+    }
+    model_fff = get_zuko_nsf(**flow_params_dct)
+    model_fff, _, _, _, _, _ = load_fff_model(
+        top_file=cfg.checkpoints.top, mc_file=cfg.checkpoints.mc, data_file=cfg.checkpoints.data,
+        top_penalty=penalty
+    )
+    model_fff.to(device)
+
+    with torch.no_grad():
+        for mc in mc_uncorr_dataloader:
+            context_mc, target_mc = mc
+            target_mc_corr, _ = model_fff.transform(
+                    target_mc, context_mc, inverse=False
+                )
+    print(target_mc)
+    print(target_mc_corr)
+    print(target_mc_corr == target_mc)

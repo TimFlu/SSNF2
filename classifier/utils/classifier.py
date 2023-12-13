@@ -195,8 +195,12 @@ def classify(device, cfg):
 
     # initialize the loss function and optimizer
     loss_fn = nn.BCELoss()
-    # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    if cfg.optimizer == "Adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    elif cfg.optimizer == "SGD":
+        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    else:
+        logger.error(f"Optimizer {cfg.optimzer} not defined here. Use Adam or SGD")
 
     # Setup Comet logger
     if cfg.logger:
@@ -223,6 +227,7 @@ def classify(device, cfg):
             best_test_loss = test_loss
             torch.save(model.state_dict(), "./best_model_weights.pth")
         # save the latest model
+        logger.info("Saving latest model...")
         torch.save(model.state_dict(), "./latest_model_weights.pth")
         # Check if stopping early
         early_stopping(train_loss)
