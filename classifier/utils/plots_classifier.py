@@ -7,7 +7,6 @@ import os
 from utils.models import SimpleNN, get_zuko_nsf, load_fff_model
 
 
-
 def plot_loss_function(training_loss, testing_loss):
     # create plots folder if it does not exist
     folder_name = os.getcwd() + "/plots/"
@@ -28,7 +27,7 @@ def plot_loss_function(training_loss, testing_loss):
     
     plt.savefig(folder_name + "/loss")
 
-def plot_data(data, keys):
+def plot_data(data, keys, name=None):
     # create plots folder if it does not exist
     folder_name = os.getcwd() + "/plots/"
     if not os.path.exists(folder_name):
@@ -38,14 +37,18 @@ def plot_data(data, keys):
         print(f"Folder '{folder_name}' already exists.")
 
     # plot preprocessed data
-    data_ = data
-    data_ = data_.to("cpu")
-    data_ = pd.DataFrame(data_)
+    if isinstance(data, pd.DataFrame):
+        data_ = data
+    else:
+        data_ = data
+        data_ = data_.to("cpu")
+        data_ = pd.DataFrame(data_)
+        
     fig, ax = plt.subplots(len(keys), figsize=(6,22))
     for i, key in enumerate(keys):
         ax[i].hist(data_.iloc[:, i], bins=100, label=key)
         ax[i].legend(loc="best")
-    plt.savefig(folder_name + "/preprocessed_data")
+    plt.savefig(folder_name + "/preprocessed_data" + name)
 
 def roc_plot(train_dataloader, cfg, device):
     # create plots folder if it does not exist
@@ -78,7 +81,6 @@ def roc_plot(train_dataloader, cfg, device):
         plt.ylabel("True Positive Rate")
         plt.legend()
         plt.savefig(folder_name + "/ROC")
-
 
 def roc_plot_corrected_mc(mc_uncorr_dataloader, cfg, device):
     # load the corrected fff model

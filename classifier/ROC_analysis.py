@@ -2,6 +2,7 @@ import pandas as pd
 import hydra
 from utils.models import SimpleNN, get_zuko_nsf, load_fff_model
 from utils.datasets import ParquetDataset, CustomDataset
+from utils.plots_classifier import plot_data
 from sklearn.metrics import roc_curve
 import torch
 from torch.utils.data import DataLoader
@@ -12,9 +13,10 @@ import matplotlib.pyplot as plt
 
 # define device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("device: ", device)
 
 # load the config
-path_to_output_folder = "/work/tfluehma/git/outputs/classifier_test_config-2023-12-13-11-32-13"
+path_to_output_folder = "/work/tfluehma/git/SSNF2/outputs/classifier_HL10HS60LR4-2023-12-14-09-22-38"
 config_name = "run_classifier"
 os.chdir(path_to_output_folder)
 
@@ -47,9 +49,9 @@ def main(cfg):
         pipelines_data = pkl.load(file)
         pipelines_data = pipelines_data["pipe1"]
     
-    # Read in mc test set
-    test_file_mc = f"{path_to_output_folder}/../../SSNF2/preprocess/mc_eb_test.parquet"
-
+    # Read in mc and data test set
+    test_file_mc = f"{path_to_output_folder}/../../preprocess/mc_eb_test.parquet"
+    test_file_data = f"{path_to_output_folder}/../../preprocess/data_eb_test.parquet"
     test_dataset_mc_full = ParquetDataset(
         test_file_mc,
         cfg.context_variables,
@@ -61,9 +63,26 @@ def main(cfg):
     test_loader_mc_full = DataLoader(
             test_dataset_mc_full,
             batch_size=2048,
-            shuffle=False,
+            shuffle=True,
         )
-    
+    test_dataset_data_full = ParquetDataset(
+        test_file_data,
+        cfg.context_variables,
+        cfg.target_variables,
+        device=device,
+        pipelines=pipelines_data,
+        rows=None
+        )    
+
+    # preprocess data and create DataFrame
+    context_data, target_data, weights_data, extra_data = test_dataset_data_full[:]
+    test_data = np.concatenate((context_data.detach().cpu().numpy(),
+                                target_data.detach().cpu().numpy(),
+                                extra_data.detach().cpu().numpy().reshape(-1, 1)), axis=1)
+    test_data = pd.DataFrame(test_data, columns=cfg.context_variables+cfg.target_variables+["probe_energyRaw"])
+    plot_data(test_data, test_data.keys(), name="_testing_data_preprocess")
+
+    # correct MC
     mc_list, mc_corrected_list = [], []
     mc_context_list, mc_corrected_context_list = [], []
     mc_extra_list = []
@@ -80,26 +99,39 @@ def main(cfg):
             mc_corrected_list.append(target_mc_corr)
             mc_context_list.append(context_mc)
             mc_corrected_context_list.append(context_mc)
-            mc_extra_list.append(extra_mc)
+            mc_extra_list.append(extra_mc.detach().cpu().numpy())
+            print("transformed", len(mc_list), "batches out of", len(test_loader_mc_full))
+            # To have a similiar amount of data and mc we stop after 264 iterations
+            if len(mc_list) == 264:
+                break
             
     mc_target = np.concatenate(mc_list, axis=0)
     mc_target_corr = np.concatenate(mc_corrected_list, axis=0)
     mc_context = np.concatenate(mc_context_list, axis=0)
     mc_extra = np.concatenate(mc_extra_list, axis=0).reshape(-1, 1)
-    
-    # Concat target with context and extra
-    mc_target_context = np.concatenate((mc_target, mc_context, mc_extra), axis=1)
-    mc_target_corr_context = np.concatenate((mc_target_corr, mc_context, mc_extra), axis=1)
 
-    mc_target_context = pd.DataFrame(mc_target_context, columns=cfg.target_variables+cfg.context_variables+["extra"])
-    mc_target_corr_context = pd.DataFrame(mc_target_corr_context, columns=cfg.target_variables+cfg.context_variables+["extra"])
+    # Concat target with context and probe_energyRaw
+    mc_target_context = np.concatenate((mc_context, mc_target, mc_extra), axis=1)
+    mc_target_corr_context = np.concatenate((mc_context, mc_target_corr, mc_extra), axis=1)
+
+    mc_target_context = pd.DataFrame(mc_target_context, columns=cfg.context_variables+cfg.target_variables+["probe_energyRaw"])
+    mc_target_corr_context = pd.DataFrame(mc_target_corr_context, columns=cfg.context_variables+cfg.target_variables+["probe_energyRaw"])
     
+    # Concat MC with data
+    mc_and_data = pd.concat([mc_target_context, test_data], axis=0)
+    mc_corr_and_data = pd.concat([mc_target_corr_context, test_data], axis=0)
+
+    # plot the data to verify the distribution
+    plot_data(mc_and_data, mc_and_data.keys(), name="_mc_and_data")
+    plot_data(mc_corr_and_data, mc_corr_and_data.keys(), name="_mc_corr_and_data")
+
     # Create the CustomDataset and DataLoader to bring the data in the right format
     # for the classifier
-    mc_dataset = CustomDataset(data=mc_target_context, labels=np.ones(len(mc_target_context)), device=device)
-    mc_corr_dataset = CustomDataset(data=mc_target_corr_context, labels=np.ones(len(mc_target_corr_context)), device=device)
-    mc_target_dataloader = DataLoader(mc_dataset, batch_size=cfg.hyperparameters.batch_size, shuffle=False)
-    mc_target_dataloader = DataLoader(mc_corr_dataset, batch_size=cfg.hyperparameters.batch_size, shuffle=False)
+    labels = [1 for _ in range(len(mc_target_context))] + [0 for _ in range(len(test_data))]
+    mc_and_data_dataset = CustomDataset(data=mc_and_data, labels=labels, device=device)
+    mc_corr_and_data_dataset = CustomDataset(data=mc_corr_and_data, labels=labels, device=device)
+    mc_and_data_dataloader = DataLoader(mc_and_data_dataset, batch_size=cfg.hyperparameters.batch_size, shuffle=True)
+    mc_corr_and_data_dataloader = DataLoader(mc_corr_and_data_dataset, batch_size=cfg.hyperparameters.batch_size, shuffle=True)
     
     # create and load classifier model with best weights
     input_size = len(cfg.context_variables) + len(cfg.target_variables) + 1
@@ -113,27 +145,36 @@ def main(cfg):
             batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learning_rate}"
     with torch.no_grad():
         plt.figure()
-        y_test = mc_target_dataloader.dataset.labels.to("cpu")
-        X_test = mc_target_dataloader.dataset.data
+        y_test = mc_and_data_dataloader.dataset.labels.to("cpu")
+        X_test = mc_and_data_dataloader.dataset.data
         y_pred = model_classifier(X_test)
         y_pred = y_pred.to("cpu")
+        print((y_test == 0).sum())
+        print((y_test == 1).sum())
+        accuracy = (y_pred.round() == y_test).float().sum()/len(y_pred)
+        print("Accuracy uncorr: ", accuracy*100,"%")
         fpr, tpr, thresholds = roc_curve(y_test, y_pred)
         plt.plot(fpr, tpr, label=params_label)
         plt.title("Receiver Operating Characteristics")
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
         plt.legend()
-        plt.savefig("./plots//ROC_test")
+        plt.savefig("./plots/ROC_uncorrected.png")
 
-
-
-
-
-
-
-
-
-
+        plt.figure()
+        y_test = mc_corr_and_data_dataloader.dataset.labels.to("cpu")
+        X_test = mc_corr_and_data_dataloader.dataset.data
+        y_pred = model_classifier(X_test)
+        y_pred = y_pred.to("cpu")
+        accuracy = (y_pred.round() == y_test).float().sum()/len(y_pred)
+        print("Accuracy corr: ", accuracy*100,"%")
+        fpr, tpr, thresholds = roc_curve(y_test, y_pred)
+        plt.plot(fpr, tpr, label=params_label)
+        plt.title("Receiver Operating Characteristics")
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.legend()
+        plt.savefig("./plots/ROC_corrected.png")
 
 
 if __name__ == "__main__":
