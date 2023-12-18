@@ -16,6 +16,7 @@ from sklearn.model_selection import train_test_split
 import numpy as np
 import copy
 import pickle as pkl
+from utils.datasets import CustomDataset
 # self written
 from utils.plots_classifier import plot_loss_function, plot_data, roc_plot
 from utils.models import SimpleNN
@@ -47,33 +48,6 @@ class EarlyStopping:
                 logger.info("Early stopping")
                 self.early_stop = True
 
-# ************* Create custom Dataset ************* #
-class CustomDataset(Dataset):
-    def __init__(self, data, labels, pipelines=None, device=None):
-        self.data = data
-        self.labels = torch.tensor(labels, dtype=torch.float32, device=device).reshape(-1, 1)
-        self.pipelines = pipelines
-        self.all_variables = ["probe_pt", "probe_eta", "probe_phi", "probe_fixedGridRhoAll", "probe_r9", "probe_s4",
-                              "probe_sieie", "probe_sieip", "probe_etaWidth", "probe_phiWidth", "probe_pfPhoIso03",
-                              "probe_pfChargedIsoPFPV", "probe_pfChargedIsoWorstVtx", "probe_energyRaw"]
-        
-        if self.pipelines is not None:
-            for var, pipeline in self.pipelines.items():
-                if var in self.all_variables:
-                    trans = (
-                        pipeline.transform
-                    )
-                    data[var] = trans(data[var].values.reshape(-1, 1)).reshape(-1)
-
-        self.data = torch.tensor(data.values, dtype=torch.float32, device=device)
-
-    def __len__(self):
-        return self.data.shape[0]
-    
-    def __getitem__(self, index):
-        x = self.data[index]
-        y = self.labels[index]
-        return x, y
 
 # ********* Create training and test data ********* #
 def create_data(device, cfg):
@@ -119,11 +93,11 @@ def create_data(device, cfg):
             pipelines = pipelines["pipe1"]
 
         # Create Dataset
-        train_dataset = CustomDataset(train, train_label, pipelines=pipelines, device=device)
-        test_dataset = CustomDataset(test, test_label, pipelines=pipelines, device=device)
+        train_dataset = CustomDataset(train, train_label, pipelines=pipelines, target_only=cfg.data.target_only, device=device)
+        test_dataset = CustomDataset(test, test_label, pipelines=pipelines, target_only=cfg.data.target_only, device=device)
 
         # Plot the data to verify preprocessing worked
-        plot_data(train_dataset.data, keys=train.keys())
+        plot_data(train_dataset.data, keys=train.keys(), name="")
 
         # Create Dataloader
         batch_size = cfg.hyperparameters.batch_size
@@ -139,10 +113,12 @@ def train_loop(dataloader, model, loss_fn, optimizer):
     # Set the model to training mode
     model.train()
     epoch_loss = 0.0
-    for batch, (X, y) in enumerate(dataloader):
+    for batch, (X, y, weight) in enumerate(dataloader):
         # Compute prediction and loss
         pred = model(X)
         loss = loss_fn(pred, y)
+        loss = torch.mean(weight*loss)
+
         # Backpropagation
         optimizer.zero_grad()
         loss.backward()
@@ -165,9 +141,9 @@ def test_loop(dataloader, model, loss_fn):
     # Evaluation the model with torch.no_grad() ensures that no gradients
     # are computed during test mode
     with torch.no_grad():
-        for X, y in dataloader:
+        for X, y, _ in dataloader:
             pred = model(X)
-            epoch_test_loss += loss_fn(pred, y).item()
+            epoch_test_loss += torch.mean(loss_fn(pred, y))
             correct += (pred.round() == y).float().sum()
 
     avg_batch_test_loss = epoch_test_loss / num_batches
@@ -194,7 +170,7 @@ def classify(device, cfg):
     epochs = cfg.hyperparameters.epochs
 
     # initialize the loss function and optimizer
-    loss_fn = nn.BCELoss()
+    loss_fn = nn.BCELoss(reduction='none')
     if cfg.optimizer == "Adam":
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     elif cfg.optimizer == "SGD":

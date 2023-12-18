@@ -14,12 +14,6 @@ def main():
     mc_eb_test["label"] = ["mc"] * mc_eb_test.shape[0]
     mc_eb_train["label"] = ["mc"] * mc_eb_train.shape[0]
 
-    # delete weights column
-    del data_eb_test["weight"]
-    del data_eb_train["weight"]
-    del mc_eb_test["weight"]
-    del mc_eb_train["weight"]
-
     # take the same amount of samples from data and mc for the training
     num_samples_train = min(len(data_eb_train), len(mc_eb_train))
     balanced_data_train = data_eb_train[:num_samples_train]

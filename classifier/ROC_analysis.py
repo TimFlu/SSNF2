@@ -50,6 +50,9 @@ def main(cfg):
         pipelines_data = pipelines_data["pipe1"]
     
     # Read in mc and data test set
+    # TODO: only one read in necessary as other files have MC and data already mixed.
+    # TODO: careful: ParquetDataset does not read in the "label" column and the labels are being lost.
+        # Extract the labels first to not loose them and then concat again in the end
     test_file_mc = f"{path_to_output_folder}/../../preprocess/mc_eb_test.parquet"
     test_file_data = f"{path_to_output_folder}/../../preprocess/data_eb_test.parquet"
     test_dataset_mc_full = ParquetDataset(
@@ -75,6 +78,7 @@ def main(cfg):
         )    
 
     # preprocess data and create DataFrame
+    # TODO: only for MC (when reading the other files we have MC and data already mixed)
     context_data, target_data, weights_data, extra_data = test_dataset_data_full[:]
     test_data = np.concatenate((context_data.detach().cpu().numpy(),
                                 target_data.detach().cpu().numpy(),
@@ -118,6 +122,7 @@ def main(cfg):
     mc_target_corr_context = pd.DataFrame(mc_target_corr_context, columns=cfg.context_variables+cfg.target_variables+["probe_energyRaw"])
     
     # Concat MC with data
+    # TODO: also add labels again
     mc_and_data = pd.concat([mc_target_context, test_data], axis=0)
     mc_corr_and_data = pd.concat([mc_target_corr_context, test_data], axis=0)
 
@@ -127,9 +132,10 @@ def main(cfg):
 
     # Create the CustomDataset and DataLoader to bring the data in the right format
     # for the classifier
+    # TODO: label creation here not necessairy anymore as it should already be concat to the DF before
     labels = [1 for _ in range(len(mc_target_context))] + [0 for _ in range(len(test_data))]
-    mc_and_data_dataset = CustomDataset(data=mc_and_data, labels=labels, device=device)
-    mc_corr_and_data_dataset = CustomDataset(data=mc_corr_and_data, labels=labels, device=device)
+    mc_and_data_dataset = CustomDataset(data=mc_and_data, labels=labels, target_only=cfg.data.target_only, device=device)
+    mc_corr_and_data_dataset = CustomDataset(data=mc_corr_and_data, labels=labels, target_only=cfg.data.target_only, device=device)
     mc_and_data_dataloader = DataLoader(mc_and_data_dataset, batch_size=cfg.hyperparameters.batch_size, shuffle=True)
     mc_corr_and_data_dataloader = DataLoader(mc_corr_and_data_dataset, batch_size=cfg.hyperparameters.batch_size, shuffle=True)
     
@@ -142,39 +148,44 @@ def main(cfg):
 
     # plot ROC curve
     params_label = f"layers: {cfg.model.num_layers}, nodes: {cfg.model.hidden_size},\
-            batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learning_rate}"
+batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learning_rate}"
     with torch.no_grad():
-        plt.figure()
+
+        # uncorrected MC
         y_test = mc_and_data_dataloader.dataset.labels.to("cpu")
         X_test = mc_and_data_dataloader.dataset.data
         y_pred = model_classifier(X_test)
         y_pred = y_pred.to("cpu")
-        print((y_test == 0).sum())
-        print((y_test == 1).sum())
-        accuracy = (y_pred.round() == y_test).float().sum()/len(y_pred)
+        accuracy = ((y_pred.round() == y_test).float().sum()/len(y_pred)).cpu().numpy()
         print("Accuracy uncorr: ", accuracy*100,"%")
-        fpr, tpr, thresholds = roc_curve(y_test, y_pred)
-        plt.plot(fpr, tpr, label=params_label)
-        plt.title("Receiver Operating Characteristics")
-        plt.xlabel("False Positive Rate")
-        plt.ylabel("True Positive Rate")
-        plt.legend()
-        plt.savefig("./plots/ROC_uncorrected.png")
 
-        plt.figure()
-        y_test = mc_corr_and_data_dataloader.dataset.labels.to("cpu")
-        X_test = mc_corr_and_data_dataloader.dataset.data
-        y_pred = model_classifier(X_test)
-        y_pred = y_pred.to("cpu")
-        accuracy = (y_pred.round() == y_test).float().sum()/len(y_pred)
-        print("Accuracy corr: ", accuracy*100,"%")
+        # corrected MC
+        y_test_corr = mc_corr_and_data_dataloader.dataset.labels.to("cpu")
+        X_test_corr = mc_corr_and_data_dataloader.dataset.data
+        y_pred_corr = model_classifier(X_test_corr)
+        y_pred_corr = y_pred_corr.to("cpu")
+        accuracy_corr = ((y_pred_corr.round() == y_test_corr).float().sum()/len(y_pred_corr)).cpu().numpy()
+        print("Accuracy corr: ", accuracy_corr*100,"%")
+
+
+        fig, ax = plt.subplots(2, 1, figsize=(10, 10))
+
         fpr, tpr, thresholds = roc_curve(y_test, y_pred)
-        plt.plot(fpr, tpr, label=params_label)
-        plt.title("Receiver Operating Characteristics")
-        plt.xlabel("False Positive Rate")
-        plt.ylabel("True Positive Rate")
-        plt.legend()
-        plt.savefig("./plots/ROC_corrected.png")
+        ax[0].plot(fpr, tpr, label=params_label + f", acc = {np.round(accuracy*100, 2)}%")
+        ax[0].set_title("Receiver Operating Characteristics with uncorrected MC")
+        ax[0].set_xlabel("False Positive Rate")
+        ax[0].set_ylabel("True Positive Rate")
+        ax[0].legend()
+
+        fpr_corr, tpr_corr, thresholds = roc_curve(y_test_corr, y_pred_corr)
+        ax[1].plot(fpr_corr, tpr_corr, label=params_label + f", acc = {np.round(accuracy_corr*100, decimals=2)}%")
+        ax[1].set_title("Receiver Operating Characteristics with corrected MC")
+        ax[1].set_xlabel("False Positive Rate")
+        ax[1].set_ylabel("True Positive Rate")
+        ax[1].legend()
+
+        plt.tight_layout()
+        plt.savefig("./plots/ROC2.png")
 
 
 if __name__ == "__main__":

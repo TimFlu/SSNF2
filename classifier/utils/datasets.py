@@ -10,13 +10,20 @@ from copy import deepcopy
 
 
 class CustomDataset(Dataset):
-    def __init__(self, data, labels, pipelines=None, device=None):
+    def __init__(self, data, labels, pipelines=None, target_only=False, device=None):
         self.data = data
         self.labels = torch.tensor(labels, dtype=torch.float32, device=device).reshape(-1, 1)
         self.pipelines = pipelines
+        self.context_variables = ["probe_pt", "probe_eta", "probe_phi", "probe_fixedGridRhoAll"]
         self.all_variables = ["probe_pt", "probe_eta", "probe_phi", "probe_fixedGridRhoAll", "probe_r9", "probe_s4",
                               "probe_sieie", "probe_sieip", "probe_etaWidth", "probe_phiWidth", "probe_pfPhoIso03",
                               "probe_pfChargedIsoPFPV", "probe_pfChargedIsoWorstVtx", "probe_energyRaw"]
+        
+        if 'weight' in self.data.columns:
+            # delete weights in data and store them seperately as we do not want to
+            # train the classifier on the weights
+            self.weight = torch.tensor(data["weight"].values, dtype=torch.float32, device=device)
+            del self.data["weight"]
         
         if self.pipelines is not None:
             for var, pipeline in self.pipelines.items():
@@ -25,7 +32,12 @@ class CustomDataset(Dataset):
                         pipeline.transform
                     )
                     data[var] = trans(data[var].values.reshape(-1, 1)).reshape(-1)
+        
+        if target_only:
+            for context in self.context_variables:
+                del self.data[context]
 
+        # create tensor from DataFrame
         self.data = torch.tensor(data.values, dtype=torch.float32, device=device)
 
     def __len__(self):
@@ -34,7 +46,8 @@ class CustomDataset(Dataset):
     def __getitem__(self, index):
         x = self.data[index]
         y = self.labels[index]
-        return x, y
+        weight = self.weight[index]
+        return x, y, weight
 
 
 
