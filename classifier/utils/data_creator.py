@@ -23,7 +23,7 @@ def main():
     balanced_data_test = data_eb_test[:num_samples_test]
     balanced_mc_test = mc_eb_test[:num_samples_test]
     
-    # concat the training and test data
+    # concat mc and data for the training and test set
     test_data = pd.concat([balanced_data_test, balanced_mc_test], axis=0)
     train_data = pd.concat([balanced_data_train, balanced_mc_train], axis=0)
 
@@ -37,6 +37,11 @@ def main():
     
     test_data.to_parquet("SSNF2/classifier/data/test_data.parquet")
     train_data.to_parquet("SSNF2/classifier/data/train_data.parquet")
+
+    # save the balanced MC and Data as well
+    # test set length is 542943 events
+    balanced_data_test.to_parquet("SSNF2/classifier/data/balanced_test_data.parquet")
+    balanced_mc_test.to_parquet("SSNF2/classifier/data/balanced_test_mc.parquet")
 
 if __name__ == "__main__":
     main()

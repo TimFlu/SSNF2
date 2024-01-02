@@ -2,7 +2,9 @@ import pandas as pd
 import hydra
 from utils.models import SimpleNN, get_zuko_nsf, load_fff_model
 from utils.datasets import ParquetDataset, CustomDataset
-from utils.plots_classifier import plot_data
+from utils.phoid import calculate_photonid_mva
+from utils.plots_classifier import plot_data, dump_main_plot, dump_full_profile_plot, feature_importance
+from utils.plots_classifier import classifier_corrected_mc_plot, transformed_ranges
 from sklearn.metrics import roc_curve
 import torch
 from torch.utils.data import DataLoader
@@ -10,13 +12,14 @@ import pickle as pkl
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import json
 
 # define device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("device: ", device)
 
 # load the config
-path_to_output_folder = "/work/tfluehma/git/SSNF2/outputs/classifier_HL10HS60LR4-2023-12-14-09-22-38"
+path_to_output_folder = "/work/tfluehma/git/SSNF2/outputs/classifier_HL10HS60LR4-2023-12-21-11-51-43"
 config_name = "run_classifier"
 os.chdir(path_to_output_folder)
 
@@ -49,12 +52,9 @@ def main(cfg):
         pipelines_data = pkl.load(file)
         pipelines_data = pipelines_data["pipe1"]
     
-    # Read in mc and data test set
-    # TODO: only one read in necessary as other files have MC and data already mixed.
-    # TODO: careful: ParquetDataset does not read in the "label" column and the labels are being lost.
-        # Extract the labels first to not loose them and then concat again in the end
-    test_file_mc = f"{path_to_output_folder}/../../preprocess/mc_eb_test.parquet"
-    test_file_data = f"{path_to_output_folder}/../../preprocess/data_eb_test.parquet"
+    # Read in mc and data test set  
+    test_file_mc = f"{path_to_output_folder}/../../classifier/data/balanced_test_mc.parquet"
+    test_file_data = f"{path_to_output_folder}/../../classifier/data/balanced_test_data.parquet"
     test_dataset_mc_full = ParquetDataset(
         test_file_mc,
         cfg.context_variables,
@@ -75,10 +75,9 @@ def main(cfg):
         device=device,
         pipelines=pipelines_data,
         rows=None
-        )    
-
+        )
+    
     # preprocess data and create DataFrame
-    # TODO: only for MC (when reading the other files we have MC and data already mixed)
     context_data, target_data, weights_data, extra_data = test_dataset_data_full[:]
     test_data = np.concatenate((context_data.detach().cpu().numpy(),
                                 target_data.detach().cpu().numpy(),
@@ -89,6 +88,7 @@ def main(cfg):
     # correct MC
     mc_list, mc_corrected_list = [], []
     mc_context_list, mc_corrected_context_list = [], []
+    mc_weights_lst = []
     mc_extra_list = []
     with torch.no_grad():
         for mc in test_loader_mc_full:
@@ -99,20 +99,21 @@ def main(cfg):
             target_mc = target_mc.detach().cpu().numpy()
             target_mc_corr = target_mc_corr.detach().cpu().numpy()
             context_mc = context_mc.detach().cpu().numpy()
+            weights_mc = weights_mc.detach().cpu().numpy()
             mc_list.append(target_mc)
             mc_corrected_list.append(target_mc_corr)
             mc_context_list.append(context_mc)
             mc_corrected_context_list.append(context_mc)
             mc_extra_list.append(extra_mc.detach().cpu().numpy())
-            print("transformed", len(mc_list), "batches out of", len(test_loader_mc_full))
-            # To have a similiar amount of data and mc we stop after 264 iterations
-            if len(mc_list) == 264:
-                break
+            mc_weights_lst.append(weights_mc)
+            if len(mc_list) % 10 == 0:
+                print("transformed", len(mc_list), "batches out of", len(test_loader_mc_full))
             
     mc_target = np.concatenate(mc_list, axis=0)
     mc_target_corr = np.concatenate(mc_corrected_list, axis=0)
     mc_context = np.concatenate(mc_context_list, axis=0)
     mc_extra = np.concatenate(mc_extra_list, axis=0).reshape(-1, 1)
+    weights_mc = np.concatenate(mc_weights_lst, axis=0)
 
     # Concat target with context and probe_energyRaw
     mc_target_context = np.concatenate((mc_context, mc_target, mc_extra), axis=1)
@@ -121,18 +122,24 @@ def main(cfg):
     mc_target_context = pd.DataFrame(mc_target_context, columns=cfg.context_variables+cfg.target_variables+["probe_energyRaw"])
     mc_target_corr_context = pd.DataFrame(mc_target_corr_context, columns=cfg.context_variables+cfg.target_variables+["probe_energyRaw"])
     
+    # plot the corrected MC and uncorrected MC to verify that the model corrected them as supposed
+    # Create copies
+    data_df_mva = test_data.copy()
+    mc_df_mva = mc_target_context.copy()
+    mc_corr_df_mva = mc_target_corr_context.copy()
+    classifier_corrected_mc_plot(data_df_mva, mc_df_mva, mc_corr_df_mva, weights_mc,
+                                 pipelines_data, path_to_output_folder, cfg)
+    
     # Concat MC with data
-    # TODO: also add labels again
     mc_and_data = pd.concat([mc_target_context, test_data], axis=0)
     mc_corr_and_data = pd.concat([mc_target_corr_context, test_data], axis=0)
 
-    # plot the data to verify the distribution
+    # plot the data to verify the distributions
     plot_data(mc_and_data, mc_and_data.keys(), name="_mc_and_data")
     plot_data(mc_corr_and_data, mc_corr_and_data.keys(), name="_mc_corr_and_data")
 
     # Create the CustomDataset and DataLoader to bring the data in the right format
     # for the classifier
-    # TODO: label creation here not necessairy anymore as it should already be concat to the DF before
     labels = [1 for _ in range(len(mc_target_context))] + [0 for _ in range(len(test_data))]
     mc_and_data_dataset = CustomDataset(data=mc_and_data, labels=labels, target_only=cfg.data.target_only, device=device)
     mc_corr_and_data_dataset = CustomDataset(data=mc_corr_and_data, labels=labels, target_only=cfg.data.target_only, device=device)
@@ -188,5 +195,9 @@ batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learnin
         plt.savefig("./plots/ROC2.png")
 
 
+
+    # plot feature importance
+    feature_importance(model_classifier, mc_and_data_dataloader.dataset.data, cfg, device)
+    feature_importance(model_classifier, mc_corr_and_data_dataloader.dataset.data, cfg, device, corrected=True)
 if __name__ == "__main__":
     main()

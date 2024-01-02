@@ -48,7 +48,6 @@ class EarlyStopping:
                 logger.info("Early stopping")
                 self.early_stop = True
 
-
 # ********* Create training and test data ********* #
 def create_data(device, cfg):
 
@@ -143,7 +142,7 @@ def test_loop(dataloader, model, loss_fn):
     with torch.no_grad():
         for X, y, _ in dataloader:
             pred = model(X)
-            epoch_test_loss += torch.mean(loss_fn(pred, y))
+            epoch_test_loss += torch.mean(loss_fn(pred, y)).item()
             correct += (pred.round() == y).float().sum()
 
     avg_batch_test_loss = epoch_test_loss / num_batches
