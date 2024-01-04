@@ -2,7 +2,7 @@
 
 # Define the parameters
 params=(
-  "HL4HS20"
+  "HL25HS50LR4TO"
 )
 
 # Loop over the parameters

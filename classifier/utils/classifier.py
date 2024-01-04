@@ -36,6 +36,7 @@ class EarlyStopping:
     
     def __call__(self, val_loss):
         relative_loss = (self.best_loss - val_loss) / self.best_loss * 100
+        logger.info(f"Early stopping relative loss = {relative_loss}")
         if relative_loss > self.min_delta:
             self.best_loss = val_loss
             self.counter = 0
@@ -166,14 +167,15 @@ def classify(device, cfg):
     logger.info("Training with Model: \n{}".format(model))
     # Define Hyperparameters
     learning_rate = cfg.hyperparameters.learning_rate
+    weight_decay = cfg.hyperparameters.weight_decay
     epochs = cfg.hyperparameters.epochs
 
     # initialize the loss function and optimizer
     loss_fn = nn.BCELoss(reduction='none')
     if cfg.optimizer == "Adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     elif cfg.optimizer == "SGD":
-        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     else:
         logger.error(f"Optimizer {cfg.optimzer} not defined here. Use Adam or SGD")
 

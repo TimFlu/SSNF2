@@ -1,0 +1,18 @@
+hydra:
+  run:
+    dir: outputs/classifier_${hydra.job.config_name}-${now:%Y-%m-%d}-${now:%H-%M-%S}
+  job: 
+    chdir: True
+hyperparameters:
+  learning_rate: 1e-4
+  batch_size: 32
+  epochs: 100
+model:
+  num_layers: 16
+  hidden_size: 20
+data: 
+  name: ssnf
+logger: True
+stopper:
+  patience: 10
+  min_delta: 0.05

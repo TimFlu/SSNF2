@@ -5,8 +5,7 @@ hydra:
     chdir: True
 hyperparameters:
   learning_rate: 1e-4
-  weight_decay: 1e-3
-  batch_size: 252
+  batch_size: 32
   epochs: 100
 optimizer: Adam # or SGD
 model:
@@ -14,8 +13,8 @@ model:
   hidden_size: 60
 data: 
   name: ssnf
-  target_only: False
-logger: False
+  target_only: True
+logger: True
 stopper:
   patience: 10
   min_delta: 0.05

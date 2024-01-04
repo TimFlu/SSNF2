@@ -3,11 +3,11 @@ from comet_ml import Experiment
 
 
 
-def setup_comet_logger(name, cfg):
+def setup_comet_logger(name, cfg, project_name_="ssnf-byt-classify"):
     comet_logger = Experiment(
         api_key="5OzmIvJNsXYfBCTb5CTYF8Bqy",
         workspace="timflu",
-        project_name="ssnf-byt-classify",
+        project_name=project_name_,
         #experiment_name="",
         #save_dir="",
     )
