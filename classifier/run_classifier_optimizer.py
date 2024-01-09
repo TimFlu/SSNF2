@@ -18,12 +18,6 @@ def main(cfg):
     logger.debug("Current dir: {}".format(os.getcwd()))
     logger.info("Training wit cfg: \n{}".format(OmegaConf.to_yaml(cfg)))
 
-    # Setup Comet logger
-    if cfg.logger:
-        comet_name = os.getcwd().split("/")[-1]
-        comet_logger = setup_comet_logger(comet_name, cfg, project_name_="comet-optimizer")
-
-
     # save the config -> run_classifier
     cfg_name = HydraConfig.get().job.name
     with open(f"{os.getcwd()}/{cfg_name}.yaml", "w") as file:
@@ -40,25 +34,40 @@ def main(cfg):
     logger.debug("Using {}".format(device))
 
     # Optimizer stuff -> later to be put in config
-    from comet_ml import Optimizer
+    from comet_ml import Optimizer, Experiment
+    
     config_opt = {
         "algorithm": "bayes",
         "parameters": {
-            "learning_rate": {"type": "float", "scaling_type": "loguniform", "min": 1e-6, "max": 1e-1}, 
-            "batch_size": {"type": "discrete", "values": [16, 32, 64, 128, 256]},
-        },
-        "spec": {
-            "maxCombo": 0,
-            "metric": "loss",
-            "objective": "minimize",
-        },
-        "name": "Bayesian Search",
-        "trials": 1,
+            "learning_rate": {"type": "integer", "min": 1, "max": 3},
+            "batch_size": {"type": "integer", "min": 1, "max": 3}    
+        }
     }
-    opt = Optimizer(config_opt)
-    for experiment in opt.get_experiments():
-        experiment.log_parameter("learning_rate", 10)
-    # classify(device, cfg, opt)
+    def objective(params):
+        return 2
+
+    # config_opt = {
+    #     "algorithm": "bayes",
+    #     "parameters": {
+    #         "learning_rate": {"type": "float", "scaling_type": "loguniform", "min": 1e-6, "max": 1e-1}, 
+    #         "batch_size": {"type": "discrete", "values": [16, 32, 64, 128, 256]},
+    #     },
+    #     "spec": {
+    #         "maxCombo": 0,
+    #         "metric": "loss",
+    #         "objective": "minimize",
+    #     },
+    #     "name": "Bayesian Search",
+    #     "trials": 1,
+    # }
+    opt = Optimizer(config_opt, api_key="5OzmIvJNsXYfBCTb5CTYF8Bqy")
+    for experiment in opt.get_experiments(project_name="comet-optimizer"):
+        hyperparams = experiment.get_parameter("learning_rate")
+        score = objective(hyperparams)
+        experiment.log_metric("loss", score)
+        experiment.end()
+
+        # classify(device, cfg, opt)
 
 
 if __name__ == "__main__":
