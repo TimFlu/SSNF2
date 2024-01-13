@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_curve, auc
 import torch
 import os
 import mplhep as hep
@@ -71,7 +71,7 @@ transformed_ranges = {
 
 def classifier_corrected_mc_plot(data_df_mva, mc_df_mva, mc_corr_df_mva, 
                                  weights_mc, pipelines_data,
-                                 path_to_output_folder, cfg):
+                                 path_to_output_folder, cfg, comet_logger):
     
     # create folder if it does not exist
     folder_name = os.getcwd() + "/plots/transform_analysis/"
@@ -174,14 +174,15 @@ def classifier_corrected_mc_plot(data_df_mva, mc_df_mva, mc_corr_df_mva,
                 weights=weights_mc,
                 output_dir="./plots/transform_analysis/",
                 extra_name="_top",
+                cometlogger_epoch=[comet_logger, 0]
             )
 
 
-def feature_importance(model, X_data, cfg, device, corrected=False):
+def feature_importance(model, X_data, cfg, comet_logger, device, name="", corrected=False):
     if corrected:
-        savepath = "./plots/feature_importance_corrected.png"
+        savepath = f"./plots/{name}_feature_importance_corrected.png"
     else:
-        savepath = "./plots/feature_importance.png"
+        savepath = f"./plots/{name}_feature_importance.png"
     if cfg.data.target_only:
         label = cfg.target_variables + ["probe_energyRaw"]
     else:
@@ -192,16 +193,18 @@ def feature_importance(model, X_data, cfg, device, corrected=False):
     output.backward(torch.ones_like(output))
     feature_importance = X_tensor.grad.abs().mean(dim=0).cpu()
     # Plotting feature importances
-    plt.figure(figsize=(12, 12))
+    fig = plt.figure(figsize=(12, 12))
     plt.bar(range(len(feature_importance)), feature_importance, align='center')
     plt.xticks(ticks=range(len(feature_importance)), labels=label, rotation='vertical', fontsize=9)
     plt.xlabel('Feature')
     plt.ylabel('Importance Score')
     plt.title('Feature Importances')
     plt.savefig(savepath)
+    if cfg.logger:
+        comet_logger.log_figure(f"{name} Feature Importances", fig)
 
 
-def plot_loss_function(training_loss, testing_loss):
+def plot_loss_function(training_loss, testing_loss, comet_logger, cfg):
     # create plots folder if it does not exist
     folder_name = os.getcwd() + "/plots/"
     if not os.path.exists(folder_name):
@@ -220,11 +223,25 @@ def plot_loss_function(training_loss, testing_loss):
     ax[1].legend()
     
     plt.savefig(folder_name + "/loss")
+    if cfg.logger:
+        comet_logger.log_figure("loss", fig)
 
 
-def plot_data(data, keys, name=None):
+def plot_data(data, keys, comet_logger, cfg, name=None):
+    """
+    Samples the data and returns a plot.
+
+    Parameters: 
+    data (DataFrame / Tensor): data wished to sample.
+    keys: column names of the data.
+    name (str, optinal): name to save the plot as.
+    """
     # create plots folder if it does not exist
     folder_name = os.getcwd() + "/plots/"
+    if name is not None:
+        comet_name = "preprocessed_data" + name
+    else:
+        comet_name = "preprocessed_data"
     if not os.path.exists(folder_name):
         os.makedirs(folder_name)
         print(f"Folder '{folder_name}' created succesfully.")
@@ -244,9 +261,11 @@ def plot_data(data, keys, name=None):
         ax[i].hist(data_.iloc[:, i], bins=100, label=key)
         ax[i].legend(loc="best")
     plt.savefig(folder_name + "/preprocessed_data" + name)
+    if cfg.logger:
+        comet_logger.log_figure(comet_name, fig)
 
 
-def roc_plot(train_dataloader, cfg, device):
+def roc_plot(train_dataloader, cfg, comet_logger, device):
     # create plots folder if it does not exist
     folder_name = os.getcwd() + "/plots/"
     if not os.path.exists(folder_name):
@@ -263,20 +282,26 @@ def roc_plot(train_dataloader, cfg, device):
     model.load_state_dict(torch.load("./best_model_weights.pth"))
     # plot ROC curve
     params_label = f"layers: {cfg.model.num_layers}, nodes: {cfg.model.hidden_size},\
-          batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learning_rate}"
+batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learning_rate}"
     with torch.no_grad():
-        plt.figure()
+        fig = plt.figure(figsize=(16,16))
         y_test = train_dataloader.dataset.labels.to("cpu")
         X_test = train_dataloader.dataset.data
         y_pred = model(X_test)
         y_pred = y_pred.to("cpu")
         fpr, tpr, thresholds = roc_curve(y_test, y_pred)
-        plt.plot(fpr, tpr, label=params_label)
+        # Calculate AUC
+        roc_auc = auc(fpr, tpr)
+        plt.plot(fpr, tpr, label=params_label + f" AUC={roc_auc}")
         plt.title("Receiver Operating Characteristics")
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
         plt.legend()
         plt.savefig(folder_name + "/ROC")
+        
+        if cfg.logger:
+            comet_logger.log_figure("Receiver Operatin Characteristics", fig)
+            comet_logger.log_metrics({"AUC": roc_auc})
 
 
 def divide_dist(distribution, bins):

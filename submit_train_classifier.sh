@@ -2,7 +2,9 @@
 
 # Define the parameters
 params=(
-  "HL25HS50LR4TO"
+  "test_on_corr_mc"
+  "test_on_uncorr_mc"
+  "test_on_TO"
 )
 
 # Loop over the parameters

@@ -362,6 +362,17 @@ def load_fff_model(top_file, mc_file, data_file, top_penalty, which="zuko_nsf"):
 
 # Simple NN with Linear functions and ReLU activation function
 class SimpleNN(nn.Module):
+    """
+    Creates a simple NN with Linear functions and ReLU activation function.
+
+    Attributes:
+        input_size (int): Size of the data being trained on.
+        hidden_size (int): How many nodes one layer should contain.
+        num_layers (int): Amount of hidden layers in the Neural Network.
+
+    Returns:
+        x (pytorch model): Neural Network.
+    """
     def __init__(self, input_size, hidden_size, num_layers):
         super().__init__()
         self.fc = nn.Linear(input_size, hidden_size)
