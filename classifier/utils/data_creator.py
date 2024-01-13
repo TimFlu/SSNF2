@@ -42,6 +42,7 @@ def main():
     # test set length is 542943 events
     balanced_data_test.to_parquet("SSNF2/classifier/data/balanced_test_data.parquet")
     balanced_mc_test.to_parquet("SSNF2/classifier/data/balanced_test_mc.parquet")
-
+    balanced_data_train.to_parquet("SSNF2/classifier/data/balanced_train_data.parquet")
+    balanced_mc_train.to_parquet("SSNF2/classifier/data/balanced_train_mc.parquet")
 if __name__ == "__main__":
     main()

@@ -5,8 +5,8 @@ hydra:
     chdir: True
 hyperparameters:
   learning_rate: 1e-4
-  weight_decay: 1e-3
-  batch_size: 252
+  weight_decay: 1e-6
+  batch_size: 32
   epochs: 100
 optimizer: Adam # or SGD
 model:
@@ -15,10 +15,11 @@ model:
 data: 
   name: ssnf
   target_only: False
-logger: False
+  corrected: False # either train on corrected MC + data or uncorrected MC + data
+logger: True
 stopper:
-  patience: 10
-  min_delta: 0.05
+  patience: 20
+  min_delta: 0.0005
 checkpoints:
   data: /work/tfluehma/git/SSNF2/outputs/base_cfg_zuko0_data_eb-2023-10-26-10-22-54
   mc : /work/tfluehma/git/SSNF2/outputs/base_cfg_zuko0_mc_eb-2023-11-01-10-52-57
