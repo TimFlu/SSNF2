@@ -104,6 +104,7 @@ def create_data(device, cfg, logger):
         batch_size = cfg.hyperparameters.batch_size
         train_dataloader = DataLoader(train_dataset_sonar, batch_size=batch_size, shuffle=True)
         test_dataloader = DataLoader(test_dataset_sonar, batch_size=batch_size, shuffle=True)
+        return train_dataloader, test_dataloader, train_dataloader, test_dataloader
 
     else:
     #     train_data = pd.read_parquet("/work/tfluehma/git/SSNF2/classifier/data/train_data.parquet")
@@ -216,7 +217,7 @@ def test_loop(dataloader, model, loss_fn):
     return avg_batch_test_loss, 100*correct
 
 # ******** classifier function containing training, testing and keeping track of results ********
-def classify(device, cfg):
+def classify(device, cfg, comet_logger=None):
     """
     Training of Binary Classifier on classifying Monte Carlo sampes and data samples
 
@@ -228,10 +229,9 @@ def classify(device, cfg):
     """
     
     # Setup Comet logger
-    comet_logger = None
-    if cfg.logger:
-        comet_name = os.getcwd().split("/")[-1]
-        comet_logger = setup_comet_logger(comet_name, cfg)
+    # if cfg.logger and comet_logger is not None:
+    #     comet_name = os.getcwd().split("/")[-1]
+    #     comet_logger = setup_comet_logger(comet_name, cfg)
     # Initialize early stopping
     early_stopping = EarlyStopping(patience=cfg.stopper.patience, min_delta=cfg.stopper.min_delta)
     best_test_loss = 100000000
@@ -268,6 +268,7 @@ def classify(device, cfg):
     # keep track of models loss
     train_loss_list = []
     test_loss_list = []
+    test_accuracy_list = []
     for t in range(epochs):
         logger.info(f"Epoch {t+1}\n-------------------------------")
         # loss is averaged per batch
@@ -278,6 +279,7 @@ def classify(device, cfg):
                                        "test_accuracy": test_accuracy}, step=t)
         train_loss_list.append(train_loss)
         test_loss_list.append(test_loss)
+        test_accuracy_list.append(test_accuracy)
         # save the best model
         if test_loss < best_test_loss:
             logger.info("New best test loss, saving model...")
@@ -319,3 +321,5 @@ def classify(device, cfg):
         plt.savefig("./plots/feature_importance.png")
         if cfg.logger:
             comet_logger.log_figure("Feature Importances", fig)
+
+    return test_accuracy_list[-1]

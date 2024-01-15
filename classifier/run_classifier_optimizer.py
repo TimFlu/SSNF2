@@ -10,7 +10,7 @@ from utils.log import setup_comet_logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-@hydra.main(version_base=None, config_path="config_classifier", config_name="test_config")
+@hydra.main(version_base=None, config_path="config_classifier", config_name="sonar_test")
 def main(cfg):
     # /work/tfluehma/git
     initial_dir = get_original_cwd()
@@ -39,9 +39,14 @@ def main(cfg):
     config_opt = {
         "algorithm": "bayes",
         "parameters": {
-            "learning_rate": {"type": "integer", "min": 1, "max": 3},
-            "batch_size": {"type": "integer", "min": 1, "max": 3}    
-        }
+            "learning_rate": {"type": "float", "min": 1e-7, "max": 1e-3},
+            "batch_size": {"type": "integer", "min": 5, "max": 64},   
+        },
+        # Declare what to optimize and how
+        "spec": {
+            "metric": "accuracy",
+            "objective": "maximize",
+        },
     }
     def objective(params):
         return 2
@@ -62,12 +67,15 @@ def main(cfg):
     # }
     opt = Optimizer(config_opt, api_key="5OzmIvJNsXYfBCTb5CTYF8Bqy")
     for experiment in opt.get_experiments(project_name="comet-optimizer"):
-        hyperparams = experiment.get_parameter("learning_rate")
-        score = objective(hyperparams)
-        experiment.log_metric("loss", score)
+        cfg.hyperparameters.learning_rate = experiment.get_parameter("learning_rate")
+        cfg.hyperparameters.batch_size = experiment.get_parameter("batch_size") 
+        experiment.set_name(f"sonar_training_BS{cfg.hyperparameters.batch_size}_LR{cfg.hyperparameters.learning_rate}")
+        accuracy = classify(device, cfg, experiment)
+        print("Accuracy:", accuracy)
+        experiment.log_metric("loss", accuracy)
         experiment.end()
 
-        # classify(device, cfg, opt)
+
 
 
 if __name__ == "__main__":

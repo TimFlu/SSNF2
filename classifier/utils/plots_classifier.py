@@ -195,7 +195,8 @@ def feature_importance(model, X_data, cfg, comet_logger, device, name="", correc
     # Plotting feature importances
     fig = plt.figure(figsize=(12, 12))
     plt.bar(range(len(feature_importance)), feature_importance, align='center')
-    plt.xticks(ticks=range(len(feature_importance)), labels=label, rotation='vertical', fontsize=9)
+    if cfg.data.name != "sonar":
+        plt.xticks(ticks=range(len(feature_importance)), labels=label, rotation='vertical', fontsize=9)
     plt.xlabel('Feature')
     plt.ylabel('Importance Score')
     plt.title('Feature Importances')
