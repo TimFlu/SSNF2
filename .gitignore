@@ -145,3 +145,7 @@ preprocess/*figures/*
 preprocess/*.pkl
 
 *.DS_Store
+
+# classifier stuff by Tim
+classifier/data/*
+classifier/outputs/*
