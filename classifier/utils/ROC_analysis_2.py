@@ -92,7 +92,11 @@ def correct_mc(cfg, comet_logger, device, dataset="test"):
                                 weights_data.detach().cpu().numpy().reshape(-1, 1),
                                 extra_data.detach().cpu().numpy().reshape(-1, 1)), axis=1)
     test_data = pd.DataFrame(test_data, columns=cfg.context_variables+cfg.target_variables+["weight"]+["probe_energyRaw"])
-    plot_data(test_data, test_data.keys(), comet_logger, cfg, name="_testing_data_preprocess")
+    if cfg.data.dummy_weights:
+        for context_var in cfg.context_variables:
+            test_data[context_var] = test_data[context_var] * cfg.data.dummy_weights
+
+    # plot_data(test_data, test_data.keys(), comet_logger, cfg, name="_testing_data_preprocess")
 
     # correct MC
     mc_list, mc_corrected_list = [], []
@@ -124,14 +128,24 @@ def correct_mc(cfg, comet_logger, device, dataset="test"):
     mc_extra = np.concatenate(mc_extra_list, axis=0).reshape(-1, 1)
     weights_mc = np.concatenate(mc_weights_lst, axis=0).reshape(-1, 1)
 
+    if cfg.data.dummy_weights:
+        print(mc_context)
+        mc_context *= cfg.data.dummy_weights
+        print(mc_context)
+        weights_mc_ = np.ones_like(weights_mc)
+        weights_mc = weights_mc_
+
     # Concat target with context, weight and probe_energyRaw and create DataFrames
     mc_target_context = np.concatenate((mc_context, mc_target, weights_mc, mc_extra), axis=1)
     mc_target_corr_context = np.concatenate((mc_context, mc_target_corr, weights_mc, mc_extra), axis=1)
 
     mc_target_context = pd.DataFrame(mc_target_context, columns=cfg.context_variables+cfg.target_variables+["weight"]+["probe_energyRaw"])
     mc_target_corr_context = pd.DataFrame(mc_target_corr_context, columns=cfg.context_variables+cfg.target_variables+["weight"]+["probe_energyRaw"])
-    plot_data(mc_target_context, mc_target_context.keys(), comet_logger, cfg, name="_mc_samples")
-    plot_data(mc_target_corr_context, mc_target_corr_context.keys(), comet_logger, cfg, name="_mc_corrected_samples")
+    
+
+    # plot data with mc and data with mc_corrected samples
+    plot_data(mc_target_context, test_data, mc_target_context.keys(), comet_logger, cfg, name="_mc_samples_"+dataset)
+    plot_data(mc_target_corr_context, test_data, mc_target_corr_context.keys(), comet_logger, cfg, name="_mc_corrected_samples_"+dataset)
 
     # plot the corrected MC and uncorrected MC to verify that the model corrected them as supposed
     # Create copies
@@ -155,15 +169,17 @@ def correct_mc(cfg, comet_logger, device, dataset="test"):
     
     return mc_and_data_dataloader, mc_corr_and_data_dataloader
 
-def ROC_analysis(uncorr_test_dataloader, corr_test_dataloader, cfg, device, comet_logger):
+def ROC_analysis(uncorr_test_dataloader, corr_test_dataloader, cfg, device, comet_logger, model=None):
     
     # create and load classifier model with best weights
-    input_size = len(cfg.context_variables) + len(cfg.target_variables) + 1
-    num_layers = cfg.model.num_layers
-    hidden_size = cfg.model.hidden_size
-    model_classifier = SimpleNN(input_size, hidden_size, num_layers).to(device)
-    model_classifier.load_state_dict(torch.load("./best_model_weights.pth"))
-
+    if model is None:
+        input_size = uncorr_test_dataloader.dataset.data.shape[1]
+        num_layers = cfg.model.num_layers
+        hidden_size = cfg.model.hidden_size
+        model_classifier = SimpleNN(input_size, hidden_size, num_layers).to(device)
+        model_classifier.load_state_dict(torch.load("./best_model_weights.pth"))
+    else:
+        model_classifier = model
     # plot ROC curve
     params_label = f"layers: {cfg.model.num_layers}, nodes: {cfg.model.hidden_size},\
 batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learning_rate}"
@@ -183,18 +199,19 @@ batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learnin
         accuracy_corr = ((y_pred_corr.round() == y_test_corr).float().sum()/len(y_pred_corr)).cpu().numpy()
 
 
-        fig, ax = plt.subplots(2, 1, figsize=(10, 10))
+        fig, ax = plt.subplots(2, 1, subplot_kw=dict(box_aspect=1),
+                         sharex=True, sharey=True, layout="constrained",figsize=(20, 25))
 
         fpr, tpr, thresholds = roc_curve(y_test, y_pred)
-        auc_roc = auc(fpr, tpr)
-        ax[0].plot(fpr, tpr, label=params_label + f", acc={np.round(accuracy*100, 2)}%, AUC={auc_roc}")
+        auc_roc = round(auc(fpr, tpr), 3)
+        ax[0].plot(fpr, tpr, c="skyblue", lw=2, label=params_label + f"\n, acc={np.round(accuracy*100, 2)}%, AUC={auc_roc}")
         ax[0].set_title("Receiver Operating Characteristics with uncorrected MC")
         ax[0].set_xlabel("False Positive Rate")
         ax[0].set_ylabel("True Positive Rate")
         ax[0].legend()
 
         fpr_corr, tpr_corr, thresholds = roc_curve(y_test_corr, y_pred_corr)
-        auc_roc_corr = auc(fpr_corr, tpr_corr)
+        auc_roc_corr = round(auc(fpr_corr, tpr_corr), 3)
         ax[1].plot(fpr_corr, tpr_corr, label=params_label + f", acc={np.round(accuracy_corr*100, decimals=2)}%, AUC={auc_roc_corr}")
         ax[1].set_title("Receiver Operating Characteristics with corrected MC")
         ax[1].set_xlabel("False Positive Rate")
@@ -203,9 +220,12 @@ batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learnin
 
         plt.tight_layout()
         plt.savefig("./plots/ROC2.png")
-        comet_logger.log_figure(figure=fig, figure_name="Receiver Operating Characteristics with corrected MC")
-
+        if cfg.logger:
+            comet_logger.log_figure(figure=fig, figure_name="Receiver Operating Characteristics with corrected MC")
+            comet_logger.log_metrics({"AUC uncorr": auc_roc, "AUC_corr": auc_roc_corr})
 
     # plot feature importance
     feature_importance(model_classifier, uncorr_test_dataloader.dataset.data, cfg, comet_logger, device, name="uncorrected")
     feature_importance(model_classifier, corr_test_dataloader.dataset.data, cfg, comet_logger, device, name="corrected", corrected=True)
+
+    return fpr, tpr, fpr_corr, tpr_corr

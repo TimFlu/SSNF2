@@ -193,15 +193,28 @@ def feature_importance(model, X_data, cfg, comet_logger, device, name="", correc
     output.backward(torch.ones_like(output))
     feature_importance = X_tensor.grad.abs().mean(dim=0).cpu()
     # Plotting feature importances
-    fig = plt.figure(figsize=(12, 12))
-    plt.bar(range(len(feature_importance)), feature_importance, align='center')
-    plt.xticks(ticks=range(len(feature_importance)), labels=label, rotation='vertical', fontsize=9)
-    plt.xlabel('Feature')
+    fig = plt.figure(figsize=(16, 20))
+    bars = plt.bar(range(len(feature_importance)), feature_importance, color='skyblue', edgecolor='black', align='center')
+
+    # Add value labels
+    for bar in bars:
+        height = np.round(bar.get_height(), 3)
+        plt.annotate(f'{height}',
+                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, 3),  # 3 points vertical offset
+                    textcoords="offset points",
+                    ha='center', va='bottom')
+    
+    plt.xticks(ticks=range(len(feature_importance)), labels=label, rotation=55, fontsize=20)
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    # plt.xlabel('Feature')
     plt.ylabel('Importance Score')
     plt.title('Feature Importances')
     plt.savefig(savepath)
     if cfg.logger:
         comet_logger.log_figure(f"{name} Feature Importances", fig)
+    plt.close()
 
 
 def plot_loss_function(training_loss, testing_loss, comet_logger, cfg):
@@ -227,7 +240,7 @@ def plot_loss_function(training_loss, testing_loss, comet_logger, cfg):
         comet_logger.log_figure("loss", fig)
 
 
-def plot_data(data, keys, comet_logger, cfg, name=None):
+def plot_data(mc, data, keys, comet_logger, cfg, name=None):
     """
     Samples the data and returns a plot.
 
@@ -255,15 +268,53 @@ def plot_data(data, keys, comet_logger, cfg, name=None):
         data_ = data
         data_ = data_.to("cpu")
         data_ = pd.DataFrame(data_)
-        
-    fig, ax = plt.subplots(len(keys), figsize=(6,22))
+
+    if isinstance(mc, pd.DataFrame):
+        mc_ = mc
+    else:
+        mc_ = mc
+        mc_ = mc_.to("cpu")
+        mc_ = pd.DataFrame(mc_)
+    
+    fig, ax = plt.subplots(len(keys), figsize=(8, 3*len(keys)))
     for i, key in enumerate(keys):
-        ax[i].hist(data_.iloc[:, i], bins=100, label=key)
+        ax[i].hist(data_.iloc[:, i], bins=100, label=key+"_data", alpha=0.5)
+        ax[i].hist(mc_.iloc[:, i], bins=100, label=key+"_mc", alpha=0.5)
         ax[i].legend(loc="best")
+    plt.suptitle("preprocessed_data" + name, fontsize=25) 
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig(folder_name + "/preprocessed_data" + name)
     if cfg.logger:
         comet_logger.log_figure(comet_name, fig)
+    plt.close()
 
+def roc_plot_stacked(fpr, tpr, fpr_corr, tpr_corr, comet_logger, cfg):
+    folder_name = os.getcwd() + "/plots/"
+
+    alphas = np.linspace(0.1, 1, len(fpr))
+    fig = plt.figure(figsize=(10, 8))
+    for i, (fpr_, tpr_, alpha_) in enumerate(zip(fpr, tpr, alphas)):
+        if i == len(tpr)-1:
+            plt.plot(fpr_, tpr_, lw=2, alpha=alpha_, c='g', label="uncorrected MC")
+        else:
+            plt.plot(fpr_, tpr_, lw=2, alpha=alpha_, c='g')
+    for i, (fpr_corr_, tpr_corr_, alpha_) in enumerate(zip(fpr_corr, tpr_corr, alphas)):
+        if i == len(tpr)-1:
+            plt.plot(fpr_corr_, tpr_corr_, lw=2, alpha=alpha_, c='b', label="corrected MC")
+        else:
+            plt.plot(fpr_corr_, tpr_corr_, lw=2, alpha=alpha_, c='b')
+
+    plt.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r', label='Chance', alpha=.8)
+    plt.xlim([-0.05, 1.05])
+    plt.ylim([-0.05, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic over Epochs')
+    plt.legend(loc="lower right")
+    plt.savefig(folder_name + "/ROC_stacked")
+    if cfg.logger:
+        comet_logger.log_figure("Receiver Operatin Characteristics stacked", fig)
+    plt.close()
 
 def roc_plot(train_dataloader, cfg, comet_logger, device):
     # create plots folder if it does not exist
@@ -291,7 +342,7 @@ batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learnin
         y_pred = y_pred.to("cpu")
         fpr, tpr, thresholds = roc_curve(y_test, y_pred)
         # Calculate AUC
-        roc_auc = auc(fpr, tpr)
+        roc_auc = round(auc(fpr, tpr), 3)
         plt.plot(fpr, tpr, label=params_label + f" AUC={roc_auc}")
         plt.title("Receiver Operating Characteristics")
         plt.xlabel("False Positive Rate")

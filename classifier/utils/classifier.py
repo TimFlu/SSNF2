@@ -17,7 +17,7 @@ import copy
 import pickle as pkl
 from utils.datasets import CustomDataset
 # self written
-from utils.plots_classifier import plot_loss_function, plot_data, roc_plot, feature_importance
+from utils.plots_classifier import plot_loss_function, plot_data, roc_plot, feature_importance, roc_plot_stacked
 from utils.models import SimpleNN
 from utils.ROC_analysis_2 import ROC_analysis, correct_mc
 # logging
@@ -145,7 +145,7 @@ def create_data(device, cfg, logger):
     return mc_and_data_dataloader_train, mc_and_data_dataloader_test, mc_corr_and_data_dataloader_train, mc_corr_and_data_dataloader_test
 
 # **************** Train Function ***************** #
-def train_loop(dataloader, model, loss_fn, optimizer):
+def train_loop(dataloader, model, loss_fn, optimizer, comet_logger, cfg):
     """
     Training step of the classifier.
 
@@ -178,6 +178,12 @@ def train_loop(dataloader, model, loss_fn, optimizer):
             testing_loss, current = loss.item(), (batch + 1) * len(X)
             correct = (pred.round() == y).float().mean()
             logger.info(f"current batch loss: {testing_loss:>7f} Accuracy: {(100*correct):>0.1f}%  [{current:>5d}/{size:>5d}]")
+            if cfg.logger:
+                pred_ = pred.clone()
+                y_ = y.clone()
+                y_ = y_.detach().cpu().numpy().reshape(-1)
+                pred_ = pred_.detach().cpu().numpy().reshape(-1).round()
+                comet_logger.log_confusion_matrix(y_.astype(int), pred_.astype(int), step=batch)
     avg_batch_loss = epoch_loss / num_batches
     return avg_batch_loss
 
@@ -268,10 +274,11 @@ def classify(device, cfg):
     # keep track of models loss
     train_loss_list = []
     test_loss_list = []
+    fpr_list, tpr_list, fpr_corr_list, tpr_corr_list = [], [], [], []
     for t in range(epochs):
         logger.info(f"Epoch {t+1}\n-------------------------------")
         # loss is averaged per batch
-        train_loss = train_loop(train_dataloader, model, loss_fn, optimizer)
+        train_loss = train_loop(train_dataloader, model, loss_fn, optimizer, comet_logger, cfg)
         test_loss, test_accuracy = test_loop(test_dataloader, model, loss_fn)
         if cfg.logger:
             comet_logger.log_metrics({"avg_batch_train_loss": train_loss, "avg_batch_test_loss": test_loss,
@@ -292,16 +299,22 @@ def classify(device, cfg):
             break
         # plot ROC curve and feature importance every 10 epchs
         if t % 10 == 0:
-            roc_plot(test_dataloader, cfg, comet_logger, device)
+            # roc_plot(test_dataloader, cfg, comet_logger, device)
             # plot feature importance
-            feature_importance(model, test_dataloader.dataset.data, cfg, comet_logger, device)
-            
+            # feature_importance(model, test_dataloader.dataset.data, cfg, comet_logger, device)
+            if cfg.logger and cfg.data.name != "sonar":
+                fpr, tpr, fpr_corr, tpr_corr = ROC_analysis(test_uncorr_dataloader, test_corrected_dataloader, cfg, device, comet_logger, model)
+                fpr_list.append(fpr)
+                tpr_list.append(tpr)
+                fpr_corr_list.append(fpr_corr)
+                tpr_corr_list.append(tpr_corr)         
     # plot the loss functions and final ROC curve
     plot_loss_function(training_loss=train_loss_list, testing_loss=test_loss_list, comet_logger=comet_logger, cfg=cfg)
     roc_plot(test_dataloader, cfg, comet_logger, device)
     
     if cfg.logger and cfg.data.name != "sonar":
-        ROC_analysis(cfg, device, comet_logger)
+        _ = ROC_analysis(test_uncorr_dataloader, test_corrected_dataloader, cfg, device, comet_logger)
+        roc_plot_stacked(fpr_list, tpr_list, fpr_corr_list, tpr_corr_list, comet_logger, cfg)
 
     elif cfg.data.name == "sonar":
         model.load_state_dict(torch.load("./best_model_weights.pth"))

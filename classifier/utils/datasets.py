@@ -33,6 +33,7 @@ class CustomDataset(Dataset):
                     )
                     data[var] = trans(data[var].values.reshape(-1, 1)).reshape(-1)
         
+        # del self.data["probe_energyRaw"]
         if target_only:
             for context in self.context_variables:
                 del self.data[context]
