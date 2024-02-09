@@ -204,7 +204,7 @@ batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learnin
 
         fpr, tpr, thresholds = roc_curve(y_test, y_pred)
         auc_roc = round(auc(fpr, tpr), 3)
-        ax[0].plot(fpr, tpr, c="skyblue", lw=2, label=params_label + f"\n, acc={np.round(accuracy*100, 2)}%, AUC={auc_roc}")
+        ax[0].plot(fpr, tpr, c="blue", lw=3, label=params_label + f",\n acc={np.round(accuracy*100, 2)}%, AUC={auc_roc}")
         ax[0].set_title("Receiver Operating Characteristics with uncorrected MC")
         ax[0].set_xlabel("False Positive Rate")
         ax[0].set_ylabel("True Positive Rate")
@@ -212,7 +212,7 @@ batch_size = {cfg.hyperparameters.batch_size}, LR = {cfg.hyperparameters.learnin
 
         fpr_corr, tpr_corr, thresholds = roc_curve(y_test_corr, y_pred_corr)
         auc_roc_corr = round(auc(fpr_corr, tpr_corr), 3)
-        ax[1].plot(fpr_corr, tpr_corr, label=params_label + f", acc={np.round(accuracy_corr*100, decimals=2)}%, AUC={auc_roc_corr}")
+        ax[1].plot(fpr_corr, tpr_corr, c="blue", lw=3, label=params_label + f",\n acc={np.round(accuracy_corr*100, decimals=2)}%, AUC={auc_roc_corr}")
         ax[1].set_title("Receiver Operating Characteristics with corrected MC")
         ax[1].set_xlabel("False Positive Rate")
         ax[1].set_ylabel("True Positive Rate")
